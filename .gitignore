@@ -2,10 +2,20 @@
 __pycache__
 **/__pycache__
 train_venv
-checkpoints
-tokenizer
+checkpoints/
+tokenizer/
 *.log
-base
-instruct
-data
-data_instruct
+base/
+instruct/
+data/
+data_instruct/
+# The Dataset Repository (Nested Ghost)
+datasets/
+# The Hugging Face Deployment (Nested Ghost)
+#hf/
+
+# Universal Binary Shield
+**.pt
+**.bin
+**.gz
+**.tar
