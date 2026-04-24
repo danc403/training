@@ -1,0 +1,11 @@
+**/.git
+__pycache__
+**/__pycache__
+train_venv
+checkpoints
+tokenizer
+*.log
+base
+instruct
+data
+data_instruct
