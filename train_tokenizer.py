@@ -46,7 +46,7 @@ def jsonl_text_iterator(files, eos_tag):
                 except Exception:
                     continue
 
-def train_tokenizer(input_dir, output_dir, vocab_size, custom_tokens):
+def train_tokenizer(input_path, output_dir, vocab_size, custom_tokens):
     """
     Trains a Byte-Level BPE Tokenizer for the Wyrm architecture.
     Forces full iteration over the entire dataset.
@@ -72,10 +72,14 @@ def train_tokenizer(input_dir, output_dir, vocab_size, custom_tokens):
         limit_alphabet=1000
     )
 
-    # 4. Gather JSONL files
-    files = glob.glob(os.path.join(input_dir, "*.jsonl"))
+    # 4. Gather JSONL files (Updated for single file or recursive directory support)
+    if os.path.isfile(input_path):
+        files = [input_path]
+    else:
+        files = glob.glob(os.path.join(input_path, "**", "*.jsonl"), recursive=True)
+        
     if not files:
-        print("Error: No .jsonl files found in " + input_dir)
+        print("Error: No .jsonl files found at " + input_path)
         return
 
     # Count total samples for the trainer to prevent early exit
@@ -104,7 +108,7 @@ def train_tokenizer(input_dir, output_dir, vocab_size, custom_tokens):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Full-Dataset BPE Tokenizer Trainer.")
-    parser.add_argument("--input", type=str, default="./", help="Directory with .jsonl data")
+    parser.add_argument("--input", type=str, default="./", help="Directory or single .jsonl file")
     parser.add_argument("--output", type=str, default="./tokenizer", help="Output directory")
     parser.add_argument("--vocab", type=int, default=24000, help="Target vocabulary size")
     
@@ -124,7 +128,7 @@ if __name__ == "__main__":
     ]
 
     train_tokenizer(
-        input_dir=args.input,
+        input_path=args.input,
         output_dir=args.output,
         vocab_size=args.vocab,
         custom_tokens=custom_specials
