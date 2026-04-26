@@ -49,6 +49,10 @@ def main():
     parser.add_argument("--warmup_steps", type=int, default=500, help="Learning rate warmup steps")
     parser.add_argument("--weight_decay", type=float, default=0.1, help="Weight decay for optimizer")
     
+    # Pressure control for Knowledge Crystal density
+    parser.add_argument("--max_extra_mask", type=float, default=0.0, help="Initial extra masking probability (shotgun)")
+    parser.add_argument("--eos_id", type=int, default=0, help="ID of the EOS token to protect from shotgun masking")
+    
     parser.add_argument("--log_interval", type=int, default=1, help="How often to print metrics")
     parser.add_argument("--save_interval", type=int, default=500, help="How often to save a checkpoint")
     parser.add_argument("--use_loss_controller", action="store_true", help="Enable the Shock-and-Recovery LossController")
@@ -85,6 +89,13 @@ def main():
     tokens_per_sample = ctx_len - 1
     micro_batch_tokens = args.batch_size * tokens_per_sample
     grad_accum_steps = max(1, args.total_batch_size // micro_batch_tokens)
+    
+    # n-1 epoch logic preparation
+    steps_per_epoch = len(train_loader) // grad_accum_steps
+    if steps_per_epoch == 0: steps_per_epoch = 1
+    total_epochs = (args.max_steps // steps_per_epoch) + 1
+    # Decay mask to reach 0.0 exactly at the start of the last epoch
+    total_descent_steps = steps_per_epoch * (total_epochs - 1)
         
     muon_params = []
     adamw_params = []
@@ -115,6 +126,14 @@ def main():
     
     while step < args.max_steps:
         t0 = time.time()
+        
+        # Pressure decay logic: hits 0.0 at the start of final epoch
+        if args.max_extra_mask > 0 and step < total_descent_steps:
+            progress = step / total_descent_steps
+            current_extra_mask = args.max_extra_mask * (1.0 - progress)
+        else:
+            current_extra_mask = 0.0
+
         optimizer.zero_grad()
         loss_accum = 0.0
         
@@ -126,6 +145,12 @@ def main():
                 x, y, mask = next(data_iter)
                 
             x, y, mask = x.to(device, non_blocking=True), y.to(device, non_blocking=True), mask.to(device, non_blocking=True)
+            
+            # PRESSURE: CPU Vectorized Masking
+            if current_extra_mask > 0:
+                shotgun = torch.rand(x.shape) < current_extra_mask
+                x[shotgun] = args.eos_id
+                mask[shotgun] = 0.0
             
             # No autocast for CPU; Native FP32 provides best throughput on i5-7300HQ
             logits, _ = model(input_ids=x)
@@ -169,8 +194,8 @@ def main():
             if step < args.warmup_steps:
                 curr_lr = args.lr * (step + 1) / args.warmup_steps
             else:
-                progress = (step - args.warmup_steps) / max(1, args.max_steps - args.warmup_steps)
-                curr_lr = args.lr * max(0.0, 1.0 - progress)
+                progress_lr = (step - args.warmup_steps) / max(1, args.max_steps - args.warmup_steps)
+                curr_lr = args.lr * max(0.0, 1.0 - progress_lr)
             for g in optimizer.param_groups:
                 g['lr'] = curr_lr
             
@@ -191,7 +216,7 @@ def main():
         
         if step % args.log_interval == 0:
             active_lr = optimizer.param_groups[0]['lr']
-            print(f"STEP {step} | Loss: {loss_accum:.4f} | LR: {active_lr:.2e} | TPS: {int(tps)} | Efficiency: {mfu:.1f}% | Tokens: {total_tokens_seen}")
+            print(f"STEP {step} | Loss: {loss_accum:.4f} | LR: {active_lr:.2e} | Press: {current_extra_mask:.4f} | TPS: {int(tps)} | Efficiency: {mfu:.1f}% | Tokens: {total_tokens_seen}")
             sys.stdout.flush()
             if step % 100 == 0:
                 check_memory(step)

@@ -69,6 +69,11 @@ else
     WARMUP_STEPS=$((MAX_STEPS / 3))
 fi
 
+# --- 4. Pressure/Masking Configuration ---
+# Set initial shotgun mask probability. Decays to 0 by start of last epoch.
+EXTRA_MASK="0.235"
+EOS_ID=0
+
 WEIGHT_DECAY=0.1
 LOG_FREQ=15
 SAVE_FREQ=$((STEPS_PER_EPOCH / 2))
@@ -89,6 +94,7 @@ echo "GLOBAL_BATCH_SIZE: $GLOBAL_BATCH_SIZE"
 echo "MICRO_BATCH_SIZE: $MICRO_BATCH_SIZE"
 echo "ACTIVE_LR: $ACTIVE_LR"
 echo "WARMUP_STEPS: $WARMUP_STEPS"
+echo "Extra Mask (Shotgun): $EXTRA_MASK"
 echo "Steps Per Epoch: $STEPS_PER_EPOCH"
 echo "Total Target Steps: $MAX_STEPS over $EPOCHS Epochs"
 echo "Save Interval: Every $SAVE_FREQ steps"
@@ -108,6 +114,8 @@ python3 -m cpu.train \
     --max_steps "$MAX_STEPS" \
     --warmup_steps "$WARMUP_STEPS" \
     --weight_decay "$WEIGHT_DECAY" \
+    --max_extra_mask "$EXTRA_MASK" \
+    --eos_id "$EOS_ID" \
     --log_interval "$LOG_FREQ" \
     --save_interval "$SAVE_FREQ" \
     --device "$DEVICE" \
