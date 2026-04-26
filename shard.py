@@ -115,7 +115,7 @@ def validate_filters(full_path, t_count):
     if "poems.jsonl" in path_lower:
         return POEM_MIN_TOKENS <= t_count <= POEM_MAX_TOKENS
         
-    if "books.jsonl" in path_lower:
+    if "books.jsonl" in path_lower or "oss.jsonl" in path_lower:
         return t_count >= BOOK_MIN_TOKENS
 
     if "wiki.jsonl" in path_lower:
