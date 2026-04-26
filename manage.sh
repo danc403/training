@@ -28,7 +28,7 @@ echo "ssh -p ${vast_port} -o ServerAliveInterval=60 root@${vast_host}" | tee ssh
 if [ "$action" == "up" ]; then
     echo "Syncing local environment to remote..."
     ssh -p $vast_port root@$vast_host "mkdir -p /root/vast/"
-    rsync -avz -e "ssh -p $vast_port -o ServerAliveInterval=60 -o ServerAliveCountMax=10" ./launch.sh setup.sh tune.sh fine_tune.sh eval.py eval2.py client.py requirements.txt trainer data data_tune data_fine tokenizer root@$vast_host:/root/vast/
+    rsync -avz -e "ssh -p $vast_port -o ServerAliveInterval=60 -o ServerAliveCountMax=10" ./trrain.sh setup.sh tune.sh eval.py eval2.py requirements.txt trainer base instruct tokenizer root@$vast_host:/root/vast/
 
 elif [ "$action" == "destroy" ]; then
     echo "!!! WARNING: You are about to DESTROY instance $instance_id !!!"
