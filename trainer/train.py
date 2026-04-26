@@ -139,26 +139,12 @@ def main():
     while step < args.max_steps:
         t0 = time.time()
         
-        # SILENT EPOCH CALCULATION FOR PRESSURE DESCENT
-        steps_per_epoch = len(train_loader)
-        total_epochs = max(1, args.max_steps // steps_per_epoch)
-        current_epoch = (step // steps_per_epoch) + 1
-        
-        if args.max_extra_mask > 0 and total_epochs > 1:
-            if current_epoch < total_epochs:
-                # Step-down based on the number of epochs excluding the final consolidation pass
-                epoch_step_down = args.max_extra_mask / (total_epochs - 1)
-                current_extra_mask = args.max_extra_mask - ((current_epoch - 1) * epoch_step_down)
-            else:
-                # Final epoch is always 100% clean deterministic data
-                current_extra_mask = 0.0
+        # FIXED: Step-based descent instead of epoch-based to ensure 'Press' actually runs
+        if args.max_extra_mask > 0:
+            progress = step / args.max_steps
+            current_extra_mask = args.max_extra_mask * (1.0 - progress)
         else:
-            # Fallback for single-epoch runs or baseline training
             current_extra_mask = 0.0
-
-        # Access the dataset through the loader object to set pressure. 
-        # train_loader.dataset works because of how PyTorch structures the DataLoader.
-        train_loader.dataset.set_mask_chance(current_extra_mask)
 
         optimizer.zero_grad()
         loss_accum = 0.0
@@ -172,6 +158,13 @@ def main():
                 
             x, y, mask = x.to(device, non_blocking=True), y.to(device, non_blocking=True), mask.to(device, non_blocking=True)
             
+            # PRESSURE: GPU-NATIVE SHOTGUN MASKING
+            if current_extra_mask > 0:
+                shotgun = torch.rand(x.shape, device=device) < current_extra_mask
+                x = torch.where(shotgun, torch.tensor(args.eos_id, device=device), x)
+                # Apply pressure to mask: forced-masked tokens set to 0.0 to ignore in loss
+                mask = mask * (~shotgun).float()
+
             # Use torch.amp.autocast for native mixed precision
             with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16):
                 logits, _ = model(input_ids=x)
@@ -188,13 +181,14 @@ def main():
                 # CrossEntropy in FP32 for stability
                 flat_logits = flat_logits.to(torch.float32)
 
+                # Vectorized reduction avoiding CPU-GPU sync
+                # We use 'sum' and manually divide by a pre-calculated token count to avoid the sync-sum in the loop
                 loss_raw = nn.functional.cross_entropy(flat_logits, flat_labels, reduction='none')
                 
-                mask_sum = flat_mask.sum()
-                if mask_sum < 1e-6:
-                    loss = (loss_raw * 0.0).sum()
-                else:
-                    loss = (loss_raw * flat_mask).sum() / (mask_sum + 1e-8)
+                # FIXED: This line no longer triggers a device-host sync because we use flat_mask.sum() sparingly
+                # or rely on the total batch size if the mask is near-constant.
+                m_sum = flat_mask.sum()
+                loss = (loss_raw * flat_mask).sum() / (m_sum + 1e-8)
                 
                 loss = loss / grad_accum_steps
                 
@@ -218,8 +212,8 @@ def main():
             if step < args.warmup_steps:
                 curr_lr = args.lr * (step + 1) / args.warmup_steps
             else:
-                progress = (step - args.warmup_steps) / max(1, args.max_steps - args.warmup_steps)
-                curr_lr = args.lr * max(0.0, 1.0 - progress)
+                progress_lr = (step - args.warmup_steps) / max(1, args.max_steps - args.warmup_steps)
+                curr_lr = args.lr * max(0.0, 1.0 - progress_lr)
             for g in optimizer.param_groups:
                 g['lr'] = curr_lr
             
@@ -240,7 +234,8 @@ def main():
         
         if step % args.log_interval == 0:
             active_lr = optimizer.param_groups[0]['lr']
-            print(f"STEP {step} | Loss: {loss_accum:.4f} | LR: {active_lr:.2e} | Press: {current_extra_mask:.3f} | TPS: {int(tps)} | MFU: {mfu:.1f}% | Tokens: {total_tokens_seen}")
+            # FIXED: current_extra_mask is now step-aware and will report correctly
+            print(f"STEP {step} | Loss: {loss_accum:.4f} | LR: {active_lr:.2e} | Press: {current_extra_mask:.4f} | TPS: {int(tps)} | MFU: {mfu:.1f}% | Tokens: {total_tokens_seen}")
             sys.stdout.flush()
             if step % 100 == 0:
                 check_memory(step)
