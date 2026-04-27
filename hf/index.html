@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iDragonfly Interface</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            background-color: #1a1a1a;
+        }
+
+        #chat-container {
+            width: 95%;
+            max-width: 900px;
+            height: 90vh;
+            display: flex;
+            flex-direction: column;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+            background: rgba(20, 20, 20, 0.95);
+        }
+
+        header {
+            padding: 15px 20px;
+            background: rgba(0, 0, 0, 0.4);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top-left-radius: 12px;
+            border-top-right-radius: 12px;
+        }
+
+        h1 {
+            font-size: 1.2rem;
+            color: #4db8ff;
+            margin: 0;
+        }
+
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        label {
+            color: #ccc;
+            font-size: 0.9rem;
+        }
+
+        #model-select {
+            background: #2a2a2a;
+            color: white;
+            border: 1px solid #444;
+            padding: 5px;
+            border-radius: 4px;
+        }
+
+        #chat-window {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            background: transparent;
+        }
+
+        .message {
+            max-width: 85%;
+            padding: 14px 18px;
+            border-radius: 15px;
+            line-height: 1.6;
+            word-wrap: break-word;
+            outline: none;
+        }
+
+        .user-message {
+            align-self: flex-end;
+            background: rgba(46, 204, 113, 0.15);
+            border: 1px solid rgba(46, 204, 113, 0.3);
+            color: #f0f0f0;
+        }
+
+        .assistant-message {
+            align-self: flex-start;
+            background: rgba(52, 152, 219, 0.15);
+            border: 1px solid rgba(52, 152, 219, 0.3);
+            color: #f0f0f0;
+        }
+
+        #input-area {
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            gap: 12px;
+            border-bottom-left-radius: 12px;
+            border-bottom-right-radius: 12px;
+        }
+
+        #user-input {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.07);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 6px;
+            padding: 14px;
+            color: white;
+            font-size: 1rem;
+            outline: none;
+        }
+
+        #user-input:focus {
+            border-color: #4db8ff;
+            box-shadow: 0 0 5px rgba(77, 184, 255, 0.4);
+        }
+
+        #send-btn {
+            background: #2980b9;
+            border: none;
+            color: white;
+            padding: 0 25px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        #send-btn:hover {
+            background: #3498db;
+        }
+
+        #send-btn:disabled {
+            background: #444;
+            color: #888;
+            cursor: not-allowed;
+        }
+
+        .visually-hidden {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            border: 0;
+        }
+
+        #chat-window::-webkit-scrollbar {
+            width: 8px;
+        }
+        #chat-window::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <main id="chat-container" class="chat-container" role="main">
+        <header>
+            <h1>iDragonfly Suite</h1>
+            <div class="controls">
+                <label for="model-select">Active Engine:</label>
+                <select id="model-select" aria-label="Select Model Engine">
+                    <option value="nymph" selected>Nymph (512)</option>
+                    <option value="sprite">Sprite (384)</option>
+                    <option value="wyrm">Wyrm (768)</option>
+                    <option value="dragonfly">Dragonfly</option>
+                </select>
+            </div>
+        </header>
+
+        <div id="chat-window" 
+             role="log" 
+             aria-live="polite" 
+             aria-relevant="additions" 
+             aria-label="Chat History">
+            <div class="message assistant-message" tabindex="0">
+                iDragonfly system online. All engines initialized and ready for inference.
+            </div>
+        </div>
+
+        <section id="input-area" aria-label="Message Input">
+            <label for="user-input" class="visually-hidden">Type your message</label>
+            <input type="text" 
+                   id="user-input" 
+                   placeholder="Enter prompt..." 
+                   autocomplete="off" 
+                   spellcheck="true">
+            <button id="send-btn" aria-label="Send Message">Send</button>
+        </section>
+    </main>
+
+    <script>
+        const chatWindow = document.getElementById('chat-window');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        const modelSelect = document.getElementById('model-select');
+
+        let chatHistory = [];
+
+        function appendMessage(role, text) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${role}-message`;
+            msgDiv.textContent = text;
+            
+            // Allow keyboard focus for screen readers to read individual bubbles
+            msgDiv.tabIndex = 0;
+            msgDiv.setAttribute('role', 'article');
+            msgDiv.setAttribute('aria-label', role === 'user' ? 'You said' : 'Assistant said');
+            
+            chatWindow.appendChild(msgDiv);
+            
+            // Smooth scroll and focus management
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const text = userInput.value.trim();
+            const selectedModel = modelSelect.value;
+            
+            if (!text) return;
+
+            appendMessage('user', text);
+            userInput.value = '';
+            
+            // Use aria-disabled instead of disabled to keep focus for NVDA
+            userInput.readOnly = true;
+            sendBtn.disabled = true;
+
+            chatHistory.push({ role: "user", content: text });
+
+            try {
+                const response = await fetch('/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        model: selectedModel,
+                        messages: chatHistory,
+                        temperature: 0.7,
+                        max_tokens: 150
+                    })
+                });
+
+                if (!response.ok) throw new Error('Server Error');
+
+                const data = await response.json();
+                const assistantText = data.choices[0].message.content;
+
+                appendMessage('assistant', assistantText);
+                chatHistory.push({ role: "assistant", content: assistantText });
+
+            } catch (error) {
+                appendMessage('assistant', 'System Error: Connection to iDragonfly engine failed.');
+                console.error(error);
+            } finally {
+                userInput.readOnly = false;
+                sendBtn.disabled = false;
+                userInput.focus();
+            }
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+        
+        // Use keydown to prevent conflicts with screen reader interception of keypress
+        userInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // Initialize model list from server if available
+        async function fetchModels() {
+            try {
+                const response = await fetch('/v1/models');
+                const data = await response.json();
+                if (data.data) {
+                    modelSelect.innerHTML = '';
+                    data.data.forEach(m => {
+                        const opt = document.createElement('option');
+                        opt.value = m.id;
+                        opt.textContent = m.id.charAt(0).toUpperCase() + m.id.slice(1);
+                        if (m.id === 'nymph') opt.selected = true;
+                        modelSelect.appendChild(opt);
+                    });
+                }
+            } catch (e) {
+                console.log("Using default model list.");
+            }
+        }
+
+        fetchModels();
+    </script>
+</body>
+</html>

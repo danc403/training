@@ -1,0 +1,9 @@
+torch==2.10.0
+transformers
+tokenizers
+accelerate
+tqdm
+huggingface_hub
+fastapi
+uvicorn
+jinja2

@@ -1,0 +1,16 @@
+body {
+    background: 
+        radial-gradient(black 15 percent, transparent 16 percent) 0 0,
+        radial-gradient(black 15 percent, transparent 16 percent) 8px 8px,
+        radial-gradient(rgba(255,255,255,.1) 15 percent, transparent 20 percent) 0 1px,
+        radial-gradient(rgba(255,255,255,.1) 15 percent, transparent 20 percent) 8px 9px;
+    background-color: #282828;
+    background-size: 16px 16px;
+    color: rgba(255, 255, 255, 0.8); /* Subdued text */
+}
+
+.chat-container {
+    background: rgba(0, 0, 0, 0.5); /* Semi-transparent black */
+    backdrop-filter: blur(10px); /* Frosted glass effect */
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
