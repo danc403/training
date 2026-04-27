@@ -17,5 +17,7 @@ datasets/
 # Universal Binary Shield
 **.pt
 **.bin
+**/*.pt
+**/*.bin
 **.gz
 **.tar
