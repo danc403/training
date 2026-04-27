@@ -5,6 +5,7 @@ import time
 import json
 import torch
 import torch.nn as nn
+import psutil
 
 # Import project modules
 from trainer.config import UnifiedConfig
@@ -14,47 +15,26 @@ from trainer.data_loader import get_dataloader
 from trainer.controller import LossController
 
 def check_memory(step):
-    """Prints a terse memory snapshot to avoid screen reader clutter."""
-    if torch.cuda.is_available():
-        allocated = torch.cuda.memory_allocated() / 1024**3
-        reserved = torch.cuda.memory_reserved() / 1024**3
-        print(f"--- Step {step} Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved ---")
-        sys.stdout.flush()
+    """Prints a terse memory snapshot of system RAM for CPU training."""
+    process = psutil.Process(os.getpid())
+    mem_gb = process.memory_info().rss / 1024**3
+    print(f"--- Step {step} System Memory: {mem_gb:.2f}GB used ---")
+    sys.stdout.flush()
 
 def calculate_mfu(model, tokens_per_sec):
     """
-    Dynamic MFU calculation across Ampere (30-series), 
-    Ada (40-series), and Blackwell (50-series).
+    Throughput tracking relative to i5-7300HQ estimated peak.
+    Replaces GPU-specific MFU for local CPU hardware.
     """
-    device_name = torch.cuda.get_device_name(0).upper()
-    
-    gpu_peaks = {
-        "3060": 51.2e12,
-        "3070": 81.3e12,
-        "3080": 119.0e12,
-        "3090": 142.0e12,
-        "4060": 15.1e12,
-        "4070": 29.0e12,
-        "4080": 97.5e12,
-        "4090": 165.2e12,
-        "5070": 125.0e12,
-        "5080": 180.0e12,
-        "5090": 209.5e12
-    }
-    
-    peak_flops = 142.0e12 
-    for key, val in gpu_peaks.items():
-        if key in device_name:
-            peak_flops = val
-            break
-
     params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    # Estimated peak TFLOPS for i5-7300HQ is roughly 0.2
+    peak_flops = 0.2e12 
     flops_per_token = 6 * params 
     current_flops = tokens_per_sec * flops_per_token
     return (current_flops / peak_flops) * 100
 
 def main():
-    parser = argparse.ArgumentParser(description="iDragonfly Nymph Training Orchestrator (Native AMP)")
+    parser = argparse.ArgumentParser(description="iDragonfly Nymph Training Orchestrator (CPU Optimized)")
     
     parser.add_argument("--model_name", type=str, required=True, help="Specific IDG model: sprite, nymph, dragonfly, or wyrm")
     parser.add_argument("--config_path", type=str, default=None, help="Optional path to external json config file")
@@ -63,8 +43,8 @@ def main():
     parser.add_argument("--resume", type=str, default=None, help="Path to a specific .pt file to resume from")
     
     parser.add_argument("--lr", type=float, default=6e-4, help="Peak learning rate")
-    parser.add_argument("--batch_size", type=int, default=32, help="Micro-batch size per device")
-    parser.add_argument("--total_batch_size", type=int, default=262144, help="Target global batch size in tokens")
+    parser.add_argument("--batch_size", type=int, default=16, help="Micro-batch size (reduced for CPU L3 cache)")
+    parser.add_argument("--total_batch_size", type=int, default=16384, help="Target global batch size in tokens")
     parser.add_argument("--max_steps", type=int, default=10000, help="Total training steps")
     parser.add_argument("--warmup_steps", type=int, default=500, help="Learning rate warmup steps")
     parser.add_argument("--weight_decay", type=float, default=0.1, help="Weight decay for optimizer")
@@ -76,7 +56,7 @@ def main():
     parser.add_argument("--log_interval", type=int, default=1, help="How often to print metrics")
     parser.add_argument("--save_interval", type=int, default=500, help="How often to save a checkpoint")
     parser.add_argument("--use_loss_controller", action="store_true", help="Enable the Shock-and-Recovery LossController")
-    parser.add_argument("--device", type=str, default="cuda", help="Device to use (cuda/cpu)")
+    parser.add_argument("--device", type=str, default="cpu", help="Device to use (cpu/cuda)")
     
     args = parser.parse_args()
 
@@ -90,7 +70,9 @@ def main():
     
     start_step = 0
     total_tokens_seen = 0
-    model.to(device=device, dtype=torch.bfloat16)
+    
+    # Use FP32 for CPU to avoid bfloat16 emulation overhead
+    model.to(device=device, dtype=torch.float32)
     
     if args.resume:
         print(f"Resuming from checkpoint: {args.resume}")
@@ -102,12 +84,18 @@ def main():
         sys.stdout.flush()
     
     ctx_len = config["max_position_embeddings"]
-    # SIGNATURE KEPT IDENTICAL: Any script using this dataloader stays alive.
-    train_loader = get_dataloader(args.data_path, ctx_len, args.batch_size, eos_id=args.eos_id)
+    train_loader = get_dataloader(args.data_path, ctx_len, args.batch_size)
     
     tokens_per_sample = ctx_len - 1
     micro_batch_tokens = args.batch_size * tokens_per_sample
     grad_accum_steps = max(1, args.total_batch_size // micro_batch_tokens)
+    
+    # n-1 epoch logic preparation
+    steps_per_epoch = len(train_loader) // grad_accum_steps
+    if steps_per_epoch == 0: steps_per_epoch = 1
+    total_epochs = (args.max_steps // steps_per_epoch) + 1
+    # Decay mask to reach 0.0 exactly at the start of the last epoch
+    total_descent_steps = steps_per_epoch * (total_epochs - 1)
         
     muon_params = []
     adamw_params = []
@@ -133,15 +121,15 @@ def main():
     step = start_step
     data_iter = iter(train_loader)
     
-    print(f"--- IDG START: {args.model_name} | Accumulation: {grad_accum_steps} ---")
+    print(f"--- IDG CPU START: {args.model_name} | Accumulation: {grad_accum_steps} ---")
     sys.stdout.flush()
     
     while step < args.max_steps:
         t0 = time.time()
         
-        # FIXED: Step-based descent instead of epoch-based to ensure 'Press' actually runs
-        if args.max_extra_mask > 0:
-            progress = step / args.max_steps
+        # Pressure decay logic: hits 0.0 at the start of final epoch
+        if args.max_extra_mask > 0 and step < total_descent_steps:
+            progress = step / total_descent_steps
             current_extra_mask = args.max_extra_mask * (1.0 - progress)
         else:
             current_extra_mask = 0.0
@@ -158,40 +146,34 @@ def main():
                 
             x, y, mask = x.to(device, non_blocking=True), y.to(device, non_blocking=True), mask.to(device, non_blocking=True)
             
-            # PRESSURE: GPU-NATIVE SHOTGUN MASKING
+            # PRESSURE: CPU Vectorized Masking
             if current_extra_mask > 0:
-                shotgun = torch.rand(x.shape, device=device) < current_extra_mask
-                x = torch.where(shotgun, torch.tensor(args.eos_id, device=device), x)
-                # Apply pressure to mask: forced-masked tokens set to 0.0 to ignore in loss
-                mask = mask * (~shotgun).float()
+                shotgun = torch.rand(x.shape) < current_extra_mask
+                x[shotgun] = args.eos_id
+                mask[shotgun] = 0.0
+            
+            # No autocast for CPU; Native FP32 provides best throughput on i5-7300HQ
+            logits, _ = model(input_ids=x)
+            
+            shift_logits = logits.contiguous()
+            shift_labels = y.contiguous()
+            shift_mask = mask.contiguous()
 
-            # Use torch.amp.autocast for native mixed precision
-            with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16):
-                logits, _ = model(input_ids=x)
-                
-                shift_logits = logits.contiguous()
-                shift_labels = y.contiguous()
-                shift_mask = mask.contiguous()
-
-                v_size = shift_logits.shape[-1]
-                flat_logits = shift_logits.reshape(-1, v_size)
-                flat_labels = shift_labels.reshape(-1)
-                flat_mask = shift_mask.reshape(-1)
-                
-                # CrossEntropy in FP32 for stability
-                flat_logits = flat_logits.to(torch.float32)
-
-                # Vectorized reduction avoiding CPU-GPU sync
-                # We use 'sum' and manually divide by a pre-calculated token count to avoid the sync-sum in the loop
-                loss_raw = nn.functional.cross_entropy(flat_logits, flat_labels, reduction='none')
-                
-                # FIXED: This line no longer triggers a device-host sync because we use flat_mask.sum() sparingly
-                # or rely on the total batch size if the mask is near-constant.
-                m_sum = flat_mask.sum()
-                loss = (loss_raw * flat_mask).sum() / (m_sum + 1e-8)
-                
-                loss = loss / grad_accum_steps
-                
+            v_size = shift_logits.shape[-1]
+            flat_logits = shift_logits.reshape(-1, v_size)
+            flat_labels = shift_labels.reshape(-1)
+            flat_mask = shift_mask.reshape(-1)
+            
+            loss_raw = nn.functional.cross_entropy(flat_logits, flat_labels, reduction='none')
+            
+            mask_sum = flat_mask.sum()
+            if mask_sum < 1e-6:
+                loss = (loss_raw * 0.0).sum()
+            else:
+                loss = (loss_raw * flat_mask).sum() / (mask_sum + 1e-8)
+            
+            loss = loss / grad_accum_steps
+            
             if torch.isnan(loss) or torch.isinf(loss):
                 print(f"ABORT: Numerical Instability (NaN/Inf) at Step {step}")
                 sys.exit(1)
@@ -234,8 +216,7 @@ def main():
         
         if step % args.log_interval == 0:
             active_lr = optimizer.param_groups[0]['lr']
-            # FIXED: current_extra_mask is now step-aware and will report correctly
-            print(f"STEP {step} | Loss: {loss_accum:.4f} | LR: {active_lr:.2e} | Press: {current_extra_mask:.4f} | TPS: {int(tps)} | MFU: {mfu:.1f}% | Tokens: {total_tokens_seen}")
+            print(f"STEP {step} | Loss: {loss_accum:.4f} | LR: {active_lr:.2e} | Press: {current_extra_mask:.4f} | TPS: {int(tps)} | Efficiency: {mfu:.1f}% | Tokens: {total_tokens_seen}")
             sys.stdout.flush()
             if step % 100 == 0:
                 check_memory(step)
