@@ -21,3 +21,4 @@ datasets/
 **/*.bin
 **.gz
 **.tar
+shard
