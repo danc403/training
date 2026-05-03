@@ -123,7 +123,15 @@ if __name__ == "__main__":
         "<|python_start|>", "<|python_end|>", "<|output_start|>",
         "<|output_end|>", "<|im_start|>", "<|im_end|>",
         "<|context_start|>", "<|context_end|>", "<|document_start|>", "<|document_end|>",
-        "2026", "Sprite", "Nymph", "Wyrm", "Dragonfly",
+        
+        # --- Tool Server Specific Tags ---
+        "<tool_call>", "</tool_call>", 
+        "<tool_response>", "</tool_response>",
+        
+        # --- Model Family ---
+            "2026", "Sprite", "Nymph", "Dragonfly", "Draco", "Wyrm",
+        
+        # --- Entity Markers ---
         "[CITY]", "[POP]", "[ECON]", "[COORD]", "[HISTORY]"
     ]
 
