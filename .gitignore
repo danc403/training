@@ -5,6 +5,7 @@ train_venv
 checkpoints/
 tokenizer/
 *.log
+tmp/
 base/
 instruct/
 data/
