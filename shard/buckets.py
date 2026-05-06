@@ -58,13 +58,13 @@ def run_dynamic_bucket_interleave(is_tune_mode):
     open_buckets = [] # Starts empty, will grow as needed
     shard_idx = 0
     tokens_in_shard = 0
-    prefix = f"ares_{mode_suffix}"
+    prefix = f""
     
     # 10% Threshold for padding/closing
     CLOSE_THRESHOLD = int(c.CONTEXT_SIZE * 0.90)
     
-    f_d = open(os.path.join(output_dir, f"{prefix}_shard_{shard_idx}_data.bin"), "wb")
-    f_m = open(os.path.join(output_dir, f"{prefix}_shard_{shard_idx}_mask.bin"), "wb")
+    f_d = open(os.path.join(output_dir, f"shard_{shard_idx}_data.bin"), "wb")
+    f_m = open(os.path.join(output_dir, f"shard_{shard_idx}_mask.bin"), "wb")
 
     def flush_to_shard(bucket):
         nonlocal tokens_in_shard, shard_idx, f_d, f_m
@@ -86,8 +86,8 @@ def run_dynamic_bucket_interleave(is_tune_mode):
         if tokens_in_shard >= c.SHARD_SIZE:
             f_d.close(); f_m.close()
             shard_idx += 1
-            f_d = open(os.path.join(output_dir, f"{prefix}_shard_{shard_idx}_data.bin"), "wb")
-            f_m = open(os.path.join(output_dir, f"{prefix}_shard_{shard_idx}_mask.bin"), "wb")
+            f_d = open(os.path.join(output_dir, f"shard_{shard_idx}_data.bin"), "wb")
+            f_m = open(os.path.join(output_dir, f"shard_{shard_idx}_mask.bin"), "wb")
             tokens_in_shard = 0
             print(f"\n[Rotation] Shard {shard_idx}")
 
