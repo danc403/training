@@ -2,8 +2,8 @@
 __pycache__
 **/__pycache__
 train_venv
-checkpoints/
-tokenizer/
+checkpoints
+tokenizer
 *.log
 tmp/
 temp/
@@ -12,7 +12,7 @@ instruct/
 data/
 data_instruct/
 # The Dataset Repository (Nested Ghost)
-datasets/
+datasets
 # The Hugging Face Deployment (Nested Ghost)
 #hf/
 
@@ -24,3 +24,4 @@ datasets/
 **.gz
 **.tar
 #shard
+tool_server
