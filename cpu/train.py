@@ -8,11 +8,11 @@ import torch.nn as nn
 import psutil
 
 # Import project modules
-from trainer.config import UnifiedConfig
-from trainer.model import NymphModel
-from trainer.optim import MuonAdamW
-from trainer.data_loader import get_dataloader
-from trainer.controller import LossController
+from cpu.config import UnifiedConfig
+from cpu.model import NymphModel
+from cpu.optim import MuonAdamW
+from cpu.data_loader import get_dataloader
+from cpu.controller import LossController
 
 def check_memory(step):
     """Prints a terse memory snapshot of system RAM for CPU training."""

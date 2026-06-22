@@ -7,10 +7,10 @@ import torch
 import torch.nn as nn
 
 # Import project modules
-from trainer.config import UnifiedConfig
-from trainer.model import NymphModel
-from trainer.optim import MuonAdamW
-from trainer.data_loader import get_dataloader
+from cpu.config import UnifiedConfig
+from cpu.model import NymphModel
+from cpu.optim import MuonAdamW
+from cpu.data_loader import get_dataloader
 
 def check_memory(step):
     """Prints a terse memory snapshot to avoid screen reader clutter."""

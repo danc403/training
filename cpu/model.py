@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
-from trainer.rope import NymphRoPE
+from cpu.rope import NymphRoPE
 
 # Aliasing for code compatibility
 import torch.nn as te
