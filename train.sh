@@ -33,6 +33,12 @@ else
     VRAM_GB=0
 fi
 
+# After calculating VRAM_GB
+if [ -z "$VRAM_GB" ] || [ "$VRAM_GB" -eq 0 ]; then
+    echo "Warning: Failed to detect VRAM via amd-smi. Defaulting to 8GB safety mode."
+    VRAM_GB=8
+fi
+
 # Define Log File Name early
 LOG_FILE="${MODEL_NAME}_${TRAINING_TYPE}.log"
 
@@ -119,11 +125,23 @@ echo "Total Target Steps: $MAX_STEPS over $EPOCHS Epochs"
 echo "Save Interval: Every $SAVE_FREQ steps"
 echo "----------------------------------------"
 
+# --- Optimized Environment Setup ---
 export PYTHONPATH=$PYTHONPATH:.
 export PYTHONUNBUFFERED=1
-# AMD/ROCm might require different allocation configs than CUDA
+
 if [ "$DEVICE" == "cuda" ]; then
+    # NVIDIA Specifics
     export PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:128"
+    export CUDA_DEVICE_ORDER="PCI_BUS_ID"
+elif [ "$DEVICE" == "rocm" ]; then
+    # AMD/ROCm Specifics
+    export PYTORCH_HIP_ALLOC_CONF="max_split_size_mb:128"
+    # Essential for many RDNA3 cards (like your 7600 XT) to avoid "gfx" mismatches
+    if [ -z "$HSA_OVERRIDE_GFX_VERSION" ]; then
+        export HSA_OVERRIDE_GFX_VERSION=11.0.0
+    fi
+    # Helps stability of the ROCm caching allocator
+    export HIP_FORCE_DEV_KERNELS=1
 fi
 
 python3 -m trainer.train \

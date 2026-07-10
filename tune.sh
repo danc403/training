@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # iDragonfly Training Launcher: Optimized with Automated Step Detection
-DEVICE="cuda"
 
 DATA_DIR="./instruct"
 CKPT_BASE="./checkpoints"
@@ -10,15 +9,31 @@ CKPT_BASE="./checkpoints"
 MODEL_NAME=${1:-"sprite"}      # Defaults to sprite if $1 is empty
 TRAINING_TYPE=${2:-"base"}    # Defaults to base if $2 is empty
 EPOCHS=${3:-4}                # Defaults to 4 if $3 is empty (interpreted as additional epochs if resuming)
+
 # --- Auto-detect GPU and VRAM ---
 if command -v nvidia-smi &> /dev/null; then
+    DEVICE="cuda"
     GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader,nounits | head -n 1)
-    # Get total memory in MiB and convert to GB (integer)
     VRAM_MIB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -n 1)
     VRAM_GB=$((VRAM_MIB / 1024))
+elif command -v amd-smi &> /dev/null; then
+    DEVICE="rocm"
+    # Extract GPU Name
+    GPU_NAME=$(amd-smi static -g 0 --json | jq -r '.gpu_data[0].asic.market_name')
+    # Extract VRAM size in MB
+    VRAM_MB=$(amd-smi static -g 0 --json | jq -r '.gpu_data[0].vram.size.value')
+    # Convert to GB (Integer division)
+    VRAM_GB=$((VRAM_MB / 1024))
 else
-    GPU_NAME="Unknown"
+    DEVICE="cpu" 
+    GPU_NAME="None/CPU"
     VRAM_GB=${4:-24} # Fallback to manual input or 24
+fi
+
+# After calculating VRAM_GB
+if [ -z "$VRAM_GB" ] || [ "$VRAM_GB" -eq 0 ]; then
+    echo "Warning: Failed to detect VRAM via system tools. Defaulting to 8GB safety mode."
+    VRAM_GB=8
 fi
 
 RESUME_PATH=${5:-""} 
@@ -31,7 +46,7 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 
 # --- Dynamic Token Calculation ---
 # Calculate total tokens from all data shards (2 bytes per token)
-TOTAL_BYTES=$(stat -c%s ${DATA_DIR}/*_data.bin | awk '{s+=$1} END {print s}')
+TOTAL_BYTES=$(stat -c%s ${DATA_DIR}/*_data.bin 2>/dev/null | awk '{s+=$1} END {print s}')
 TOTAL_TOKENS=$((TOTAL_BYTES / 2))
 no_opt="--no_opt"
 
@@ -99,7 +114,7 @@ rm -rf /tmp/torchinductor_root/*
 rm -rf ~/.triton/cache/*
 pkill -9 python 2>/dev/null
 
-echo "--- STARTING $MODEL_NAME ON $GPU_NAME ---"
+echo "--- STARTING $MODEL_NAME ON $GPU_NAME ($DEVICE) ---"
 echo "Detected Tokens: $TOTAL_TOKENS"
 echo "GLOBAL_BATCH_SIZE: $GLOBAL_BATCH_SIZE"
 echo "MICRO_BATCH_SIZE: $MICRO_BATCH_SIZE"
@@ -110,9 +125,24 @@ echo "Final Stop Target (MAX_STEPS): $MAX_STEPS"
 echo "Save Interval: Every $SAVE_FREQ steps"
 echo "----------------------------------------"
 
+# --- Optimized Environment Setup ---
 export PYTHONPATH=$PYTHONPATH:.
 export PYTHONUNBUFFERED=1
-export PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:128"
+
+if [ "$DEVICE" == "cuda" ]; then
+    # NVIDIA Specifics
+    export PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:128"
+    export CUDA_DEVICE_ORDER="PCI_BUS_ID"
+elif [ "$DEVICE" == "rocm" ]; then
+    # AMD/ROCm Specifics
+    export PYTORCH_HIP_ALLOC_CONF="max_split_size_mb:128"
+    # Essential for RDNA3 cards (like 7600 XT) to avoid "gfx" mismatches
+    if [ -z "$HSA_OVERRIDE_GFX_VERSION" ]; then
+        export HSA_OVERRIDE_GFX_VERSION=11.0.0
+    fi
+    # Helps stability of the ROCm caching allocator
+    export HIP_FORCE_DEV_KERNELS=1
+fi
 
 python3 -m trainer.tune \
     --model_name "$MODEL_NAME" \

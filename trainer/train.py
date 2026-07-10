@@ -13,41 +13,34 @@ from trainer.optim import MuonAdamW
 from trainer.data_loader import get_dataloader
 from trainer.controller import LossController
 
-def check_memory(step):
-    """Prints a terse memory snapshot to avoid screen reader clutter."""
-    if torch.cuda.is_available():
+# Import GPU handlers
+from trainer.nvidia_gpu import NVIDIAGPU
+from trainer.amd_gpu import AMDGPU
+
+def check_memory(step, hardware_handler=None):
+    """Prints a terse memory snapshot, hardware-aware for AMD or NVIDIA."""
+    if "cuda" in torch.cuda.get_device_name(0).lower() or not hasattr(hardware_handler, 'gpu_id'):
+        # Fallback to standard PyTorch reporting for NVIDIA or if no handler provided
         allocated = torch.cuda.memory_allocated() / 1024**3
         reserved = torch.cuda.memory_reserved() / 1024**3
         print(f"--- Step {step} Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved ---")
-        sys.stdout.flush()
+    else:
+        try:
+            # We refresh the data to get the latest snapshot from the driver
+            gpu_data = hardware_handler._refresh()
+            used_vram = gpu_data["vram"]["used"]["value"] / 1024
+            total_vram = gpu_data["vram"]["size"]["value"] / 1024
+            print(f"--- Step {step} Memory: {used_vram:.2f}GB / {total_vram:.2f}GB VRAM used (Driver API) ---")
+        except Exception:
+            # Fallback if amd-smi query fails
+            print(f"--- Step {step} Memory: [AMD Driver Query Failed] ---")
+            
+    sys.stdout.flush()
 
-def calculate_mfu(model, tokens_per_sec):
+def calculate_mfu(model, tokens_per_sec, peak_flops):
     """
-    Dynamic MFU calculation across Ampere (30-series), 
-    Ada (40-series), and Blackwell (50-series).
+    Dynamic MFU calculation using the provided hardware handler's peak TFLOPS.
     """
-    device_name = torch.cuda.get_device_name(0).upper()
-    
-    gpu_peaks = {
-        "3060": 51.2e12,
-        "3070": 81.3e12,
-        "3080": 119.0e12,
-        "3090": 142.0e12,
-        "4060": 15.1e12,
-        "4070": 29.0e12,
-        "4080": 97.5e12,
-        "4090": 165.2e12,
-        "5070": 125.0e12,
-        "5080": 180.0e12,
-        "5090": 209.5e12
-    }
-    
-    peak_flops = 142.0e12 
-    for key, val in gpu_peaks.items():
-        if key in device_name:
-            peak_flops = val
-            break
-
     params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     flops_per_token = 6 * params 
     current_flops = tokens_per_sec * flops_per_token
@@ -79,6 +72,13 @@ def main():
     parser.add_argument("--device", type=str, default="cuda", help="Device to use (cuda/cpu)")
     
     args = parser.parse_args()
+
+    # Determine Hardware Handler
+    if "cuda" in args.device:
+        hardware_handler = NVIDIAGPU()
+    else:
+        hardware_handler = AMDGPU()
+    peak_flops = hardware_handler.peak_tflops
 
     device = args.device
     model_ckpt_path = os.path.join(args.ckpt_dir, args.model_name)
@@ -230,7 +230,7 @@ def main():
         tokens_in_step = grad_accum_steps * micro_batch_tokens
         total_tokens_seen += tokens_in_step
         tps = tokens_in_step / dt
-        mfu = calculate_mfu(model, tps)
+        mfu = calculate_mfu(model, tps, peak_flops)
         
         if step % args.log_interval == 0:
             active_lr = optimizer.param_groups[0]['lr']

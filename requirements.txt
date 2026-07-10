@@ -1,13 +1,11 @@
---extra-index-url https://download.pytorch.org/whl/cu128
-torch==2.10.0
-#transformer_engine[pytorch]
-triton==3.6.0
+--extra-index-url https://download.pytorch.org/whl/rocm6.1
+torch
+torchvision
 transformers
 tokenizers
 accelerate
 tqdm
 wandb
 sentencepiece
-# Only required if you want to export onnx
 onnx
-onnxruntime
+onnxruntime-rocm
