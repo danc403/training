@@ -96,6 +96,14 @@ def main():
     start_step = 0
     total_tokens_seen = 0
     model.to(device=actual_device, dtype=torch.bfloat16)
+
+    # Force-prime the allocator to prevent fragmentation
+    if "hip" in actual_device:
+        print("Pre-allocating anchor buffer to prevent VRAM fragmentation...")
+        # Allocate 4GB to pin it as "active" memory
+        anchor_buffer = torch.randn(1024 * 1024 * 1024, device=actual_device).repeat(4)
+        torch.cuda.empty_cache()
+        sys.stdout.flush()
     
     if args.resume:
         print(f"Resuming from checkpoint: {args.resume}")
