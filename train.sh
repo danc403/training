@@ -143,6 +143,8 @@ elif [ "$DEVICE" == "rocm" ]; then
     # Helps stability of the ROCm caching allocator
     export HIP_FORCE_DEV_KERNELS=1
 fi
+# cheat the device back to cuda for torch:
+DEVICE="cuda"
 
 python3 -m trainer.train \
     --model_name "$MODEL_NAME" \
