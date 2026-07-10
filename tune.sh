@@ -138,7 +138,7 @@ elif [ "$DEVICE" == "rocm" ]; then
     export PYTORCH_HIP_ALLOC_CONF="max_split_size_mb:128"
     # Essential for RDNA3 cards (like 7600 XT) to avoid "gfx" mismatches
     if [ -z "$HSA_OVERRIDE_GFX_VERSION" ]; then
-        export HSA_OVERRIDE_GFX_VERSION=11.0.0
+        export HSA_OVERRIDE_GFX_VERSION=11.0.2
     fi
     # Helps stability of the ROCm caching allocator
     export HIP_FORCE_DEV_KERNELS=1
