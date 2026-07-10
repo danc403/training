@@ -142,7 +142,7 @@ def main():
     sys.stdout.flush()
     
     # Determine Autocast Device Type
-    autocast_device = "cuda" if actual_device == "cuda" else "hip"
+    autocast_device = "cuda" if actual_device == "cuda" else "cuda"
     
     while step < args.max_steps:
         t0 = time.time()
