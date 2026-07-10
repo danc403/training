@@ -146,10 +146,15 @@ fi
 # cheat the device back to cuda for torch:
 DEVICE="cuda"
 export HSA_OVERRIDE_GFX_VERSION=11.0.2
-export PYTORCH_HIP_ALLOC_CONF=max_split_size_mb:128
+#export PYTORCH_HIP_ALLOC_CONF=max_split_size_mb:128
+# Reduce the block size to prevent hoarding large, non-contiguous chunks
+export PYTORCH_HIP_ALLOC_CONF="max_split_size_mb:64"
+#If it still crashes, you can stop the allocator from caching memory altogether. This will slow down your training 
+#export PYTORCH_HIP_ALLOC_CONF="garbage_collection_threshold:0.1,max_split_size_mb:0"
+
 # Force the loader to prefer the ROCm-specific libraries first
 export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libamdhip64.so.6
-#export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libamdhip64.so.6.4.43484
+
 rm -rf ~/.cache/torch/kernels
 rm -rf ~/.cache/triton
 rm -rf ~/.triton/cache
