@@ -144,6 +144,16 @@ elif [ "$DEVICE" == "rocm" ]; then
     export HIP_FORCE_DEV_KERNELS=1
 fi
 
+#cheat, must fix.
+DEVICE="cuda"
+# Force the loader to prefer the ROCm-specific libraries first
+export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libamdhip64.so.6
+
+rm -rf ~/.cache/torch/kernels
+rm -rf ~/.cache/triton
+rm -rf ~/.triton/cache
+rm -rf /tmp/torchinductor_*
+
 python3 -m trainer.tune \
     --model_name "$MODEL_NAME" \
     --data_path "$DATA_DIR" \

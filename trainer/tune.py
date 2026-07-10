@@ -16,19 +16,22 @@ from trainer.data_loader import get_dataloader
 from trainer.nvidia_gpu import NVIDIAGPU
 from trainer.amd_gpu import AMDGPU
 
-def check_memory(step, hardware_handler):
+def check_memory(step, hardware_handler=None):
     """Prints a terse memory snapshot, hardware-aware for AMD or NVIDIA."""
-    if isinstance(hardware_handler, NVIDIAGPU):
-        # Standard PyTorch reporting for NVIDIA
+    # Use the hardware_handler if provided, otherwise fallback to torch.cuda
+    if hardware_handler and hasattr(hardware_handler, '_refresh'):
+        try:
+            # We refresh the data to get the latest snapshot from the driver
+            gpu_data = hardware_handler._refresh()
+            used_vram = gpu_data["vram"]["used"]["value"] / 1024
+            total_vram = gpu_data["vram"]["size"]["value"] / 1024
+            print(f"--- Step {step} Memory: {used_vram:.2f}GB / {total_vram:.2f}GB VRAM used (Driver API) ---")
+        except Exception:
+            print(f"--- Step {step} Memory: [Driver Query Failed] ---")
+    elif torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated() / 1024**3
         reserved = torch.cuda.memory_reserved() / 1024**3
         print(f"--- Step {step} Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved ---")
-    else:
-        # Direct AMD Driver API query
-        gpu_data = hardware_handler._refresh()
-        used_vram = gpu_data["vram"]["used"]["value"] / 1024
-        total_vram = gpu_data["vram"]["size"]["value"] / 1024
-        print(f"--- Step {step} Memory: {used_vram:.2f}GB / {total_vram:.2f}GB VRAM used (Driver API) ---")
             
     sys.stdout.flush()
 
@@ -96,6 +99,14 @@ def main():
     start_step = 0
     total_tokens_seen = 0
     model.to(device=actual_device, dtype=torch.bfloat16)
+
+    # Force-prime the allocator to prevent fragmentation
+    if "hip" in actual_device:
+        print("Pre-allocating anchor buffer to prevent VRAM fragmentation...")
+        # Allocate 4GB to pin it as "active" memory
+        anchor_buffer = torch.randn(1024 * 1024 * 1024, device=actual_device).repeat(4)
+        torch.cuda.empty_cache()
+        sys.stdout.flush()
     
     if args.resume:
         print(f"Resuming from checkpoint: {args.resume}")
@@ -190,7 +201,7 @@ def main():
     sys.stdout.flush()
     
     # Determine Autocast Device Type
-    autocast_device = "cuda" if actual_device == "cuda" else "hip"
+    autocast_device = "cuda" if actual_device == "cuda" else "cuda"
     
     while step < args.max_steps:
         t0 = time.time()
@@ -286,7 +297,7 @@ def main():
             print(f"STEP {step} | Loss: {loss_accum:.4f} | LR: {active_lr:.2e} | TPS: {int(tps)} | MFU: {mfu:.1f}% | Tokens: {total_tokens_seen}")
             sys.stdout.flush()
             if step % 100 == 0:
-                check_memory(step, hardware_handler)
+                check_memory(step, hardware_handler=hardware_handler)
             
         if step % args.save_interval == 0 and step > start_step:
             checkpoint_path = os.path.join(model_ckpt_path, f"step_{step}.pt")
