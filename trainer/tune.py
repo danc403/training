@@ -39,7 +39,8 @@ def calculate_mfu(model, tokens_per_sec, peak_flops):
     params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     flops_per_token = 6 * params 
     current_flops = tokens_per_sec * flops_per_token
-    return (current_flops / peak_flops) * 100
+    # Note: peak_flops from handlers is now TFLOPS (float), so multiply by 1e12
+    return (current_flops / (peak_flops * 1e12)) * 100
 
 def main():
     parser = argparse.ArgumentParser(description="iDragonfly Nymph Training Orchestrator (Pure Eager)")
@@ -64,21 +65,26 @@ def main():
     parser.add_argument("--save_interval", type=int, default=500, help="How often to save a checkpoint")
     
     # Hardware and Logic Control
-    parser.add_argument("--device", type=str, default="cuda", help="Device to use (cuda/cpu)")
+    parser.add_argument("--device", type=str, default="cuda", help="Device to use (cuda/cpu/rocm)")
     parser.add_argument("--freeze", action="store_true", help="Enable legacy bottom-half layer and embedding freezing")
     parser.add_argument("--no_opt", action="store_true", help="Do not load optimizer state from checkpoint")
     
     args = parser.parse_args()
 
-    # Determine Hardware Handler
+    # Determine Hardware Handler and Device Mapping
     if "cuda" in args.device:
         hardware_handler = NVIDIAGPU()
-    else:
+        actual_device = "cuda"
+    elif "rocm" in args.device or "hip" in args.device:
         hardware_handler = AMDGPU()
-    peak_flops = hardware_handler.peak_tflops
+        actual_device = "hip"
+    else:
+        hardware_handler = None
+        actual_device = "cpu"
+    
+    peak_flops = hardware_handler.peak_tflops if hardware_handler else 142.0
 
     # 1. Setup Environment
-    device = args.device
     model_ckpt_path = os.path.join(args.ckpt_dir, args.model_name)
     os.makedirs(model_ckpt_path, exist_ok=True)
     
@@ -89,11 +95,11 @@ def main():
     
     start_step = 0
     total_tokens_seen = 0
-    model.to(device=device, dtype=torch.bfloat16)
+    model.to(device=actual_device, dtype=torch.bfloat16)
     
     if args.resume:
         print(f"Resuming from checkpoint: {args.resume}")
-        checkpoint_data = torch.load(args.resume, map_location=device, weights_only=False)
+        checkpoint_data = torch.load(args.resume, map_location=actual_device, weights_only=False)
         model.load_state_dict(checkpoint_data.get("model", checkpoint_data), strict=True)
         start_step = checkpoint_data.get("step", 0)
         total_tokens_seen = checkpoint_data.get("total_tokens", 0)
@@ -183,6 +189,9 @@ def main():
     print(f"--- IDG START: {args.model_name} | Accumulation: {grad_accum_steps} ---")
     sys.stdout.flush()
     
+    # Determine Autocast Device Type
+    autocast_device = "cuda" if actual_device == "cuda" else "hip"
+    
     while step < args.max_steps:
         t0 = time.time()
         optimizer.zero_grad()
@@ -195,10 +204,10 @@ def main():
                 data_iter = iter(train_loader)
                 x, y, mask = next(data_iter)
                 
-            x, y, mask = x.to(device, non_blocking=True), y.to(device, non_blocking=True), mask.to(device, non_blocking=True)
+            x, y, mask = x.to(actual_device, non_blocking=True), y.to(actual_device, non_blocking=True), mask.to(actual_device, non_blocking=True)
             
             # Pure PyTorch Autocast for production stability
-            with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
+            with torch.amp.autocast(device_type=autocast_device, dtype=torch.bfloat16):
                 # FORWARD PASS
                 logits, _ = model(input_ids=x)
                 

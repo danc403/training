@@ -19,12 +19,8 @@ from trainer.amd_gpu import AMDGPU
 
 def check_memory(step, hardware_handler=None):
     """Prints a terse memory snapshot, hardware-aware for AMD or NVIDIA."""
-    if "cuda" in torch.cuda.get_device_name(0).lower() or not hasattr(hardware_handler, 'gpu_id'):
-        # Fallback to standard PyTorch reporting for NVIDIA or if no handler provided
-        allocated = torch.cuda.memory_allocated() / 1024**3
-        reserved = torch.cuda.memory_reserved() / 1024**3
-        print(f"--- Step {step} Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved ---")
-    else:
+    # Use the hardware_handler if provided, otherwise fallback to torch.cuda
+    if hardware_handler and hasattr(hardware_handler, '_refresh'):
         try:
             # We refresh the data to get the latest snapshot from the driver
             gpu_data = hardware_handler._refresh()
@@ -32,8 +28,11 @@ def check_memory(step, hardware_handler=None):
             total_vram = gpu_data["vram"]["size"]["value"] / 1024
             print(f"--- Step {step} Memory: {used_vram:.2f}GB / {total_vram:.2f}GB VRAM used (Driver API) ---")
         except Exception:
-            # Fallback if amd-smi query fails
-            print(f"--- Step {step} Memory: [AMD Driver Query Failed] ---")
+            print(f"--- Step {step} Memory: [Driver Query Failed] ---")
+    elif torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated() / 1024**3
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        print(f"--- Step {step} Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved ---")
             
     sys.stdout.flush()
 
@@ -70,22 +69,23 @@ def main():
     parser.add_argument("--log_interval", type=int, default=1, help="How often to print metrics")
     parser.add_argument("--save_interval", type=int, default=500, help="How often to save a checkpoint")
     parser.add_argument("--use_loss_controller", action="store_true", help="Enable the Shock-and-Recovery LossController")
-    parser.add_argument("--device", type=str, default="cuda", help="Device to use (cuda/cpu)")
+    parser.add_argument("--device", type=str, default="cuda", help="Device to use (cuda/cpu/rocm)")
     
     args = parser.parse_args()
 
-    # Determine Hardware Handler
+    # Determine Hardware Handler and Device Mapping
     if "cuda" in args.device:
         hardware_handler = NVIDIAGPU()
-    else:
+        actual_device = "cuda"
+    elif "rocm" in args.device or "hip" in args.device:
         hardware_handler = AMDGPU()
+        actual_device = "hip"
+    else:
+        hardware_handler = None
+        actual_device = "cpu"
     
-    peak_flops = hardware_handler.peak_tflops
-    if peak_flops <= 0:
-        print("Warning: Could not determine peak TFLOPS. Defaulting MFU base to 1.0.")
-        peak_flops = 1.0
-
-    device = args.device
+    peak_flops = hardware_handler.peak_tflops if hardware_handler else 142.0
+    
     model_ckpt_path = os.path.join(args.ckpt_dir, args.model_name)
     os.makedirs(model_ckpt_path, exist_ok=True)
     
@@ -95,11 +95,11 @@ def main():
     
     start_step = 0
     total_tokens_seen = 0
-    model.to(device=device, dtype=torch.bfloat16)
+    model.to(device=actual_device, dtype=torch.bfloat16)
     
     if args.resume:
         print(f"Resuming from checkpoint: {args.resume}")
-        checkpoint_data = torch.load(args.resume, map_location=device, weights_only=True)
+        checkpoint_data = torch.load(args.resume, map_location=actual_device, weights_only=True)
         model.load_state_dict(checkpoint_data.get("model", checkpoint_data), strict=True)
         start_step = checkpoint_data.get("step", 0)
         total_tokens_seen = checkpoint_data.get("total_tokens", 0)
@@ -141,6 +141,9 @@ def main():
     print(f"--- IDG START: {args.model_name} | Accumulation: {grad_accum_steps} ---")
     sys.stdout.flush()
     
+    # Determine Autocast Device Type
+    autocast_device = "cuda" if actual_device == "cuda" else "hip"
+    
     while step < args.max_steps:
         t0 = time.time()
         
@@ -161,17 +164,17 @@ def main():
                 data_iter = iter(train_loader)
                 x, y, mask = next(data_iter)
                 
-            x, y, mask = x.to(device, non_blocking=True), y.to(device, non_blocking=True), mask.to(device, non_blocking=True)
+            x, y, mask = x.to(actual_device, non_blocking=True), y.to(actual_device, non_blocking=True), mask.to(actual_device, non_blocking=True)
             
             # PRESSURE: GPU-NATIVE SHOTGUN MASKING
             if current_extra_mask > 0:
-                shotgun = torch.rand(x.shape, device=device) < current_extra_mask
-                x = torch.where(shotgun, torch.tensor(args.eos_id, device=device), x)
+                shotgun = torch.rand(x.shape, device=actual_device) < current_extra_mask
+                x = torch.where(shotgun, torch.tensor(args.eos_id, device=actual_device), x)
                 # Apply pressure to mask: forced-masked tokens set to 0.0 to ignore in loss
                 mask = mask * (~shotgun).float()
 
             # Use torch.amp.autocast for native mixed precision
-            with torch.amp.autocast(device_type='cuda' if 'cuda' in device else 'cpu', dtype=torch.bfloat16):
+            with torch.amp.autocast(device_type=autocast_device, dtype=torch.bfloat16):
                 logits, _ = model(input_ids=x)
                 
                 shift_logits = logits.contiguous()
