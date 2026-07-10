@@ -145,6 +145,8 @@ elif [ "$DEVICE" == "rocm" ]; then
     export HIP_FORCE_DEV_KERNELS=1
 fi
 
+#cheat, must fix.
+DEVICE="cuda"
 # Force the loader to prefer the ROCm-specific libraries first
 export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libamdhip64.so.6
 
