@@ -52,6 +52,12 @@ class AMDGPU:
             "baselines": self.LOOKUP.get(arch, {"fp8": 0, "fp16": 0, "fp32": 0})
         }
 
+    @property
+    def peak_tflops(self):
+        """Dynamically returns the FP16 peak TFLOPS for the detected arch."""
+        # We use FP16 as the reference for BF16 operations
+        return self.info["baselines"].get("fp16", 0.0)
+
     def print_report(self):
         """Prints a human-readable summary to console."""
         i = self.info
@@ -59,17 +65,17 @@ class AMDGPU:
         print("==========================================")
         print(f"          AMD GPU STATUS REPORT           ")
         print("==========================================")
-        print(f"GPU ID:        {i['gpu_id']}")
-        print(f"Model:         {i['model']}")
-        print(f"Architecture:  {i['arch']}")
-        print(f"Bus (BDF):     {i['bdf']}")
-        print(f"VRAM Total:    {i['vram_gb']} GB")
-        print(f"PCIe Link:     {i['pcie_link']}")
+        print(f"GPU ID:       {i['gpu_id']}")
+        print(f"Model:        {i['model']}")
+        print(f"Architecture: {i['arch']}")
+        print(f"Bus (BDF):    {i['bdf']}")
+        print(f"VRAM Total:   {i['vram_gb']} GB")
+        print(f"PCIe Link:    {i['pcie_link']}")
         print("------------------------------------------")
         print(f"MFU Baselines (TFLOPS):")
-        print(f"  FP8:         {b['fp8']}")
-        print(f"  FP16:        {b['fp16']}")
-        print(f"  FP32:        {b['fp32']}")
+        print(f"  FP8:        {b['fp8']}")
+        print(f"  FP16:       {b['fp16']}")
+        print(f"  FP32:       {b['fp32']}")
         print("==========================================")
 
 def main():
@@ -86,4 +92,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

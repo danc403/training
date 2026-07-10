@@ -44,7 +44,8 @@ def calculate_mfu(model, tokens_per_sec, peak_flops):
     params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     flops_per_token = 6 * params 
     current_flops = tokens_per_sec * flops_per_token
-    return (current_flops / peak_flops) * 100
+    # Multiply by 1e12 to convert TFLOPS to absolute FLOPS
+    return (current_flops / (peak_flops * 1e12)) * 100
 
 def main():
     parser = argparse.ArgumentParser(description="iDragonfly Nymph Training Orchestrator (Native AMP)")
@@ -78,7 +79,11 @@ def main():
         hardware_handler = NVIDIAGPU()
     else:
         hardware_handler = AMDGPU()
+    
     peak_flops = hardware_handler.peak_tflops
+    if peak_flops <= 0:
+        print("Warning: Could not determine peak TFLOPS. Defaulting MFU base to 1.0.")
+        peak_flops = 1.0
 
     device = args.device
     model_ckpt_path = os.path.join(args.ckpt_dir, args.model_name)
@@ -166,7 +171,7 @@ def main():
                 mask = mask * (~shotgun).float()
 
             # Use torch.amp.autocast for native mixed precision
-            with torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16):
+            with torch.amp.autocast(device_type='cuda' if 'cuda' in device else 'cpu', dtype=torch.bfloat16):
                 logits, _ = model(input_ids=x)
                 
                 shift_logits = logits.contiguous()
@@ -238,7 +243,7 @@ def main():
             print(f"STEP {step} | Loss: {loss_accum:.4f} | LR: {active_lr:.2e} | Press: {current_extra_mask:.4f} | TPS: {int(tps)} | MFU: {mfu:.1f}% | Tokens: {total_tokens_seen}")
             sys.stdout.flush()
             if step % 100 == 0:
-                check_memory(step)
+                check_memory(step, hardware_handler=hardware_handler)
             
         if step % args.save_interval == 0 and step > start_step:
             checkpoint_path = os.path.join(model_ckpt_path, f"step_{step}.pt")

@@ -26,15 +26,15 @@ class NVIDIAGPU:
 
     @property
     def peak_tflops(self):
-        """Returns the peak TFLOPS for the detected card, or a default."""
+        """Returns the peak TFLOPS for the detected card as a float."""
         for key, val in self.LOOKUP.items():
             if key in self.name:
-                return val * 1e12  # Return as actual float
-        return 142.0 * 1e12  # Fallback (3090 baseline)
+                return val # Return as TFLOPS float
+        return 142.0 # Fallback (3090 baseline)
 
     def print_info(self):
         print(f"Device: {self.name}")
-        print(f"Peak Baseline: {self.peak_tflops / 1e12:.1f} TFLOPS")
+        print(f"Peak Baseline: {self.peak_tflops:.1f} TFLOPS")
 
 def main():
     parser = argparse.ArgumentParser(description="NVIDIA GPU Telemetry Tool")
