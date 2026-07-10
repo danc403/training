@@ -61,8 +61,10 @@ fi
 # --- 2. Set Micro-Batch Size based on Model & VRAM ---
 case $MODEL_NAME in
     "sprite")
-        if [ "$VRAM_GB" -le 12 ]; then GLOBAL_BATCH_SIZE=32768; else GLOBAL_BATCH_SIZE=65536; fi
-        if [ "$VRAM_GB" -le 12 ]; then MICRO_BATCH_SIZE=8; else MICRO_BATCH_SIZE=16; fi
+        #if [ "$VRAM_GB" -le 12 ]; then GLOBAL_BATCH_SIZE=32768; else GLOBAL_BATCH_SIZE=65536; fi
+        GLOBAL_BATCH_SIZE=65536;
+        #if [ "$VRAM_GB" -le 12 ]; then MICRO_BATCH_SIZE=8; else MICRO_BATCH_SIZE=16; fi
+        MICRO_BATCH_SIZE=8;
         LEARNING_RATE=0.0003
         ;;
     "nymph")
