@@ -229,6 +229,8 @@ def main():
                 loss_manager.sync_baseline()
             
         optimizer.step()
+        # Force the caching allocator to release unused blocks back to the system
+        torch.cuda.empty_cache()
 
         if args.use_loss_controller and step % args.log_interval == 0:
             loss_manager.step(loss_accum, step)
