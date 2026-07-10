@@ -60,7 +60,8 @@ fi
 # --- 2. Set Micro-Batch Size based on Model & VRAM ---
 case $MODEL_NAME in
     "sprite")
-        if [ "$VRAM_GB" -le 12 ]; then GLOBAL_BATCH_SIZE=65536; else GLOBAL_BATCH_SIZE=131072; fi
+        #if [ "$VRAM_GB" -le 12 ]; then GLOBAL_BATCH_SIZE=65536; else GLOBAL_BATCH_SIZE=131072; fi
+        GLOBAL_BATCH_SIZE=65536;
         if [ "$VRAM_GB" -le 12 ]; then MICRO_BATCH_SIZE=8; else MICRO_BATCH_SIZE=16; fi
         LEARNING_RATE=0.0014
         LEARNING_RATE_TUNE=0.0003
@@ -138,19 +139,11 @@ elif [ "$DEVICE" == "rocm" ]; then
     export PYTORCH_HIP_ALLOC_CONF="max_split_size_mb:128"
     # Essential for many RDNA3 cards (like your 7600 XT) to avoid "gfx" mismatches
     if [ -z "$HSA_OVERRIDE_GFX_VERSION" ]; then
-        export HSA_OVERRIDE_GFX_VERSION=11.0.0
+        export HSA_OVERRIDE_GFX_VERSION=11.0.2
     fi
     # Helps stability of the ROCm caching allocator
     export HIP_FORCE_DEV_KERNELS=1
 fi
-# cheat the device back to cuda for torch:
-DEVICE="cuda"
-export HSA_OVERRIDE_GFX_VERSION=11.0.2
-#export PYTORCH_HIP_ALLOC_CONF=max_split_size_mb:128
-# Reduce the block size to prevent hoarding large, non-contiguous chunks
-export PYTORCH_HIP_ALLOC_CONF="max_split_size_mb:20"
-#If it still crashes, you can stop the allocator from caching memory altogether. This will slow down your training 
-#export PYTORCH_HIP_ALLOC_CONF="garbage_collection_threshold:0.1,max_split_size_mb:0"
 
 # Force the loader to prefer the ROCm-specific libraries first
 export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libamdhip64.so.6
