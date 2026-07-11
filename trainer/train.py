@@ -116,7 +116,7 @@ def main():
     
     ctx_len = config["max_position_embeddings"]
     # SIGNATURE KEPT IDENTICAL: Any script using this dataloader stays alive.
-    train_loader = get_dataloader(args.data_path, ctx_len, args.batch_size, eos_id=args.eos_id)
+    train_loader = get_dataloader(args.data_path, ctx_len, args.batch_size, eos_id=args.eos_id, num_workers=8, pin_memory=True)
     
     tokens_per_sample = ctx_len - 1
     micro_batch_tokens = args.batch_size * tokens_per_sample

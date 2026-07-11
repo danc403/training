@@ -2,17 +2,18 @@ import os
 import glob
 import torch
 import numpy as np
-import mmap
 from torch.utils.data import Dataset, DataLoader
 
 class MaskedBinaryShardDataset(Dataset):
     def __init__(self, data_dir, context_length, eos_id=0):
         super().__init__()
         self.data_dir = data_dir
+        # We need context_length + 1 to create the shifted Y targets
         self.context_length = context_length
         self.read_length = context_length + 1
         self.eos_id = eos_id
         
+        # Dynamic pressure control attribute
         self.extra_mask_chance = 0.0
         
         self.data_paths = sorted(glob.glob(os.path.join(data_dir, "*_data.bin")))
@@ -25,18 +26,11 @@ class MaskedBinaryShardDataset(Dataset):
         self.shard_block_counts = []
         total_blocks = 0
         
-        # Open files as binary for mmap
-        self.data_files = [open(dp, 'rb') for dp in self.data_paths]
-        self.mask_files = [open(mp, 'rb') for mp in self.mask_paths]
-        
-        # Create memory maps for each file
-        self.data_maps = [mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) for f in self.data_files]
-        self.mask_maps = [mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) for f in self.mask_files]
-        
         for dp in self.data_paths:
             file_size = os.path.getsize(dp)
-            num_tokens = file_size // 2
-            blocks_in_shard = num_tokens // 2048
+            num_tokens = file_size // 2 # uint16
+            # We calculate blocks based on the original packing CONTEXT_SIZE
+            blocks_in_shard = num_tokens // 2048 
             
             self.shard_offsets.append(total_blocks)
             self.shard_block_counts.append(blocks_in_shard)
@@ -48,6 +42,10 @@ class MaskedBinaryShardDataset(Dataset):
         return self.num_samples
 
     def set_mask_chance(self, chance):
+        """
+        Sets the additional probability of masking a visible token.
+        0.0 = Standard production mode (uses shard mask as-is).
+        """
         self.extra_mask_chance = float(chance)
 
     def __getitem__(self, idx):
@@ -59,30 +57,39 @@ class MaskedBinaryShardDataset(Dataset):
         
         if shard_idx == -1:
             raise IndexError(f"Block index {idx} out of range.")
-            
+                
+        data_path = self.data_paths[shard_idx]
+        mask_path = self.mask_paths[shard_idx]
         local_block_idx = idx - self.shard_offsets[shard_idx]
         
-        # Calculate offsets
-        token_offset = local_block_idx * 2048 * 2
-        mask_offset = local_block_idx * 2048 * 1
-        
-        # Extract from memory map
-        raw_tokens = np.frombuffer(
-            self.data_maps[shard_idx],
-            dtype=np.uint16,
-            count=2048,
-            offset=token_offset
+        # Read tokens (uint16 = 2 bytes)
+        # We use 2048 as the stride because that's how they were packed
+        raw_tokens = np.fromfile(
+            data_path, 
+            dtype=np.uint16, 
+            count=2048, 
+            offset=local_block_idx * 2048 * 2
         )
         
-        raw_mask = np.frombuffer(
-            self.mask_maps[shard_idx],
-            dtype=np.uint8,
-            count=2048,
-            offset=mask_offset
+        # Read mask (uint8 = 1 byte)
+        raw_mask = np.fromfile(
+            mask_path, 
+            dtype=np.uint8, 
+            count=2048, 
+            offset=local_block_idx * 2048 * 1
         ).astype(np.float32)
 
+        # SURGICAL SHOTGUN PASS
+        # Only executes if the trainer has enabled extra pressure
         if self.extra_mask_chance > 0:
+            # Vectorized random trial for the whole block
             noise = np.random.rand(2048)
+            
+            # PROTECTED MASKING LOGIC:
+            # We only flip a token from 1 (visible) to 0 (hidden) if:
+            # 1. The noise trial is successful (< chance)
+            # 2. The shard originally marked it as learnable (== 1.0)
+            # 3. The token is NOT an EOS token (preserving stop signals)
             kill_mask = np.where(
                 (noise < self.extra_mask_chance) & 
                 (raw_mask == 1.0) & 
@@ -91,26 +98,27 @@ class MaskedBinaryShardDataset(Dataset):
             )
             raw_mask = raw_mask * kill_mask
         
+        # CASTING & SHIFTING
+        # x: indices 0 to 2046 (The inputs provided to the model)
+        # y: indices 1 to 2047 (The targets the model is asked to predict)
+        # mask: indices 1 to 2047 (The mask applied to the prediction of y)
         x = torch.from_numpy(raw_tokens[:-1].astype(np.int64))
         y = torch.from_numpy(raw_tokens[1:].astype(np.int64))
         mask = torch.from_numpy(raw_mask[1:])
         
         return x, y, mask
 
-    def __del__(self):
-        # Clean up handles and maps
-        for m in self.data_maps: m.close()
-        for m in self.mask_maps: m.close()
-        for f in self.data_files: f.close()
-        for f in self.mask_files: f.close()
-
-def get_dataloader(data_dir, context_length, batch_size, eos_id=0, num_workers=4, pin_memory=True):
+def get_dataloader(data_dir, context_length, batch_size, eos_id=0, num_workers=4):
+    """
+    Returns a standard DataLoader. 
+    Maintains 100% backwards compatibility with existing production scripts.
+    """
     dataset = MaskedBinaryShardDataset(data_dir, context_length, eos_id=eos_id)
     return DataLoader(
         dataset, 
         batch_size=batch_size, 
         shuffle=True, 
         num_workers=num_workers, 
-        pin_memory=pin_memory,
+        pin_memory=True,
         drop_last=True
     )
