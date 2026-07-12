@@ -101,27 +101,36 @@ def main():
     
     peak_flops = hardware_handler.peak_tflops if hardware_handler else 142.0
     
-    model_ckpt_path = os.path.join(args.ckpt_dir, args.model_name)
-    os.makedirs(model_ckpt_path, exist_ok=True)
-    
-    mgr = UnifiedConfig(config_path=args.config_path, checkpoint_path=args.resume, model_type=args.model_name)
-    config = mgr.norm_config
-    model = NymphModel(config)
-    
-    start_step = 0
-    total_tokens_seen = 0
-    model.to(device=actual_device, dtype=torch.bfloat16)
-    
-    # Compile the model for performance
-    model = torch.compile(model, backend="inductor", mode="default")
-
-    # Force-prime the allocator to prevent fragmentation
+    # Force-prime the allocator to prevent fragmentation (Moved Up)
     if "rocm" in args.device or "hip" in args.device:
         print("Pre-allocating anchor buffer to prevent VRAM fragmentation...")
         # Allocate 3GB to pin it as "active" memory
         anchor_buffer = torch.randn(1024 * 1024 * 1024, device=actual_device).repeat(4)
         torch.cuda.empty_cache()
         sys.stdout.flush()
+
+    model_ckpt_path = os.path.join(args.ckpt_dir, args.model_name)
+    os.makedirs(model_ckpt_path, exist_ok=True)
+    
+    mgr = UnifiedConfig(config_path=args.config_path, checkpoint_path=args.resume, model_type=args.model_name)
+    config = mgr.norm_config
+    ctx_len = config["max_position_embeddings"]
+    
+    # Updated loader: Now supports dynamic device pinning and CPU-force overrides (Moved Up)
+    train_loader = get_dataloader(
+        args.data_path, 
+        ctx_len, 
+        args.batch_size, 
+        eos_id=args.eos_id, 
+        device=actual_device,
+        force_cpu_loader=args.force_cpu_loader
+    )
+
+    model = NymphModel(config)
+    
+    start_step = 0
+    total_tokens_seen = 0
+    model.to(device=actual_device, dtype=torch.bfloat16)
     
     if args.resume:
         print(f"Resuming from checkpoint: {args.resume}")
@@ -132,16 +141,8 @@ def main():
         print(f"Successfully loaded weights. Resume step: {start_step}")
         sys.stdout.flush()
     
-    ctx_len = config["max_position_embeddings"]
-    # Updated loader: Now supports dynamic device pinning and CPU-force overrides
-    train_loader = get_dataloader(
-        args.data_path, 
-        ctx_len, 
-        args.batch_size, 
-        eos_id=args.eos_id, 
-        device=actual_device,
-        force_cpu_loader=args.force_cpu_loader
-    )
+    # Compile the model for performance (Moved Last)
+    model = torch.compile(model, backend="inductor", mode="default")
     
     tokens_per_sample = ctx_len - 1
     micro_batch_tokens = args.batch_size * tokens_per_sample
