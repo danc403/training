@@ -32,7 +32,7 @@ class NVIDIAGPU:
                 return val # Return as TFLOPS float
         return 142.0 # Fallback (3090 baseline)
 
-def get_memory(self):
+    def get_memory(self):
         """Returns memory usage in a structure compatible with the AMDGPU logic."""
         # torch.cuda returns bytes; we represent them as a dictionary to match AMD's API
         allocated = torch.cuda.memory_allocated(self.gpu_id)
