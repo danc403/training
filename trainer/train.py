@@ -105,14 +105,6 @@ def main():
     
     peak_flops = hardware_handler.peak_tflops if hardware_handler else 142.0
     
-    # Force-prime the allocator to prevent fragmentation (Moved Up)
-    if "rocm" in args.device or "hip" in args.device:
-        print("Pre-allocating anchor buffer to prevent VRAM fragmentation...")
-        # Allocate 4GB to pin it as "active" memory
-        #anchor_buffer = torch.randn(256 * 1024 * 1024, device=actual_device).repeat(4)
-        torch.cuda.empty_cache()
-        sys.stdout.flush()
-
     model_ckpt_path = os.path.join(args.ckpt_dir, args.model_name)
     os.makedirs(model_ckpt_path, exist_ok=True)
     

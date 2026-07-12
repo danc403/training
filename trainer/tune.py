@@ -16,21 +16,31 @@ from trainer.nvidia_gpu import NVIDIAGPU
 from trainer.amd_gpu import AMDGPU
 
 def check_memory(step, hardware_handler=None):
-    """Prints a terse memory snapshot, hardware-aware for AMD or NVIDIA."""
-    # Use the hardware_handler if provided, otherwise fallback to torch.cuda
-    if hardware_handler and hasattr(hardware_handler, '_refresh'):
-        try:
-            # We refresh the data to get the latest snapshot from the driver
-            gpu_data = hardware_handler._refresh()
-            used_vram = gpu_data["vram"]["used"]["value"] / 1024
-            total_vram = gpu_data["vram"]["size"]["value"] / 1024
-            print(f"--- Step {step} Memory: {used_vram:.2f}GB / {total_vram:.2f}GB VRAM used (Driver API) ---")
-        except Exception:
-            print(f"--- Step {step} Memory: [Driver Query Failed] ---")
+    """Prints a memory snapshot using the appropriate hardware handler."""
+    
+    if hardware_handler:
+        # AMD Handler Logic
+        if isinstance(hardware_handler, AMDGPU):
+            try:
+                mem_data = hardware_handler.get_memory()
+                used = mem_data["used_visible_vram"]["value"]
+                total = mem_data["total_visible_vram"]["value"]
+                print(f"--- Step {step} Memory: {used/1024:.2f}GB / {total/1024:.2f}GB VRAM used")
+            except Exception as e:
+                print(f"--- Step {step} Memory: [AMD Driver Query Failed: {e}] ---")
+
+        # NVIDIA Handler Logic
+        elif isinstance(hardware_handler, NVIDIAGPU):
+            # Using PyTorch Cuda API which is the standard for NVIDIA
+            allocated = torch.cuda.memory_allocated() / 1024**3
+            reserved = torch.cuda.memory_reserved() / 1024**3
+            print(f"--- Step {step} Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved")
+            
+    # Fallback if no hardware_handler object exists
     elif torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated() / 1024**3
         reserved = torch.cuda.memory_reserved() / 1024**3
-        print(f"--- Step {step} Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved ---")
+        print(f"--- Step {step} Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved")
             
     sys.stdout.flush()
 
@@ -106,14 +116,6 @@ def main():
     total_tokens_seen = 0
     model.to(device=actual_device, dtype=torch.bfloat16)
 
-    # Force-prime the allocator to prevent fragmentation
-    if "rocm" in args.device or "hip" in args.device:
-        print("Pre-allocating anchor buffer to prevent VRAM fragmentation...")
-        # Allocate 4GB to pin it as "active" memory
-        anchor_buffer = torch.randn(256 * 1024 * 1024, device=actual_device).repeat(4)
-        torch.cuda.empty_cache()
-        sys.stdout.flush()
-    
     if args.resume:
         print(f"Resuming from checkpoint: {args.resume}")
         checkpoint_data = torch.load(args.resume, map_location=actual_device, weights_only=False)
