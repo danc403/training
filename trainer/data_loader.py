@@ -103,7 +103,7 @@ def get_dataloader(data_dir, context_length, batch_size, eos_id=0, num_workers=0
         dataset, 
         batch_size=batch_size, 
         shuffle=True, 
-        num_workers=num_workers,
+        num_workers=0 if loader_device == "cuda" else num_workers,
         # Enable pin_memory only when loading from CPU RAM for fast DMA transfers
         pin_memory=(loader_device == "cpu"), 
         drop_last=True
