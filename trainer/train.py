@@ -105,7 +105,7 @@ def main():
     if "rocm" in args.device or "hip" in args.device:
         print("Pre-allocating anchor buffer to prevent VRAM fragmentation...")
         # Allocate 4GB to pin it as "active" memory
-        anchor_buffer = torch.randn(256 * 1024 * 1024, device=actual_device).repeat(4)
+        #anchor_buffer = torch.randn(256 * 1024 * 1024, device=actual_device).repeat(4)
         torch.cuda.empty_cache()
         sys.stdout.flush()
 
