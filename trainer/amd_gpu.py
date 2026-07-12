@@ -8,10 +8,8 @@ import sys
 class AMDGPU:
     """
     Module for AMD GPU telemetry and MFU baseline lookups.
-    Importable into larger packages or executable as a standalone CLI tool.
     """
     
-    # Source of Truth for MFU baselines (TFLOPS)
     LOOKUP = {
         "gfx908":  {"name": "MI100",           "fp8": 0,    "fp16": 184.6, "fp32": 46.1},
         "gfx90a":  {"name": "MI250X",          "fp8": 0,    "fp16": 383.0, "fp32": 95.7},
@@ -24,94 +22,52 @@ class AMDGPU:
 
     def __init__(self, gpu_id=0):
         self.gpu_id = gpu_id
-        self.data = self._refresh()
+        # Cache static data once to keep the module lightweight during training loops
+        self._static_data = self._fetch_static()
 
-    def _refresh(self):
-        """Fetches static hardware data from amd-smi."""
-        try:
-            cmd = ["amd-smi", "static", "-g", str(self.gpu_id), "--json"]
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            return json.loads(result.stdout)["gpu_data"][0]
-        except (subprocess.CalledProcessError, KeyError, json.JSONDecodeError) as e:
-            raise RuntimeError(f"Failed to query amd-smi static for GPU {self.gpu_id}: {e}")
+    def _fetch_static(self):
+        """Internal call for one-time setup."""
+        cmd = ["amd-smi", "static", "-g", str(self.gpu_id), "--json"]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return json.loads(result.stdout)["gpu_data"][0]
 
     def get_telemetry(self):
-        """Fetches dynamic real-time metrics for VRAM, Power, Temp, and Fan."""
-        try:
-            # Aggregate command to get all metrics in one call
-            cmd = ["amd-smi", "metric", "-m", "-p", "-t", "-f", "-g", str(self.gpu_id), "--json"]
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            metrics = json.loads(result.stdout)["gpu_metrics"][0]
-            
-            return {
-                "vram": {
-                    "used": metrics["mem_usage"]["used_visible_vram"],
-                    "total": metrics["mem_usage"]["total_visible_vram"],
-                    "free": metrics["mem_usage"]["free_visible_vram"]
-                },
-                "power": metrics["power"]["socket_power"],
-                "temp": metrics["temperature"]["edge"],
-                "fan": metrics["fan"]["usage"]
-            }
-        except (subprocess.CalledProcessError, KeyError, json.JSONDecodeError) as e:
-            raise RuntimeError(f"Failed to query amd-smi metrics for GPU {self.gpu_id}: {e}")
+        """Call this from your training loop for fresh real-time metrics."""
+        cmd = ["amd-smi", "metric", "-m", "-p", "-t", "-f", "-g", str(self.gpu_id), "--json"]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return json.loads(result.stdout)["gpu_metrics"][0]
 
     @property
     def info(self):
-        """Returns the full dictionary of hardware state and baselines."""
-        asic = self.data["asic"]
-        bus = self.data["bus"]
+        """Returns the cached static identity of the GPU."""
+        asic = self._static_data["asic"]
+        bus = self._static_data["bus"]
         arch = asic["target_graphics_version"]
-        
         return {
-            "gpu_id": self.gpu_id,
             "model": asic["market_name"],
             "arch": arch,
             "bdf": bus["bdf"],
-            "vram_gb": round(self.data["vram"]["size"]["value"] / 1024, 2),
-            "pcie_link": f"{bus['pcie_interface_version']} @ {bus['max_pcie_speed']['value']} GT/s",
             "baselines": self.LOOKUP.get(arch, {"fp8": 0, "fp16": 0, "fp32": 0})
         }
 
-    @property
-    def peak_tflops(self):
-        return self.info["baselines"].get("fp16", 0.0)
-
     def print_report(self):
-        """Prints a human-readable summary including static data and real-time telemetry."""
+        """CLI tool method to display both static identity and live metrics."""
         i = self.info
-        b = i["baselines"]
         m = self.get_telemetry()
         
-        print("==========================================")
-        print(f"          AMD GPU STATUS REPORT           ")
-        print("==========================================")
-        print(f"GPU ID:       {i['gpu_id']}")
-        print(f"Model:        {i['model']}")
-        print(f"Architecture: {i['arch']}")
-        print(f"Bus (BDF):    {i['bdf']}")
-        print(f"VRAM:         {m['vram']['used']['value']} / {m['vram']['total']['value']} {m['vram']['used']['unit']} (Free: {m['vram']['free']['value']})")
-        print(f"Power:        {m['power']['value']} {m['power']['unit']}")
-        print(f"Temp (Edge):  {m['temp']['value']} {m['temp']['unit']}")
-        print(f"PCIe Link:    {i['pcie_link']}")
-        print("------------------------------------------")
-        print(f"MFU Baselines (TFLOPS):")
-        print(f"  FP8:        {b['fp8']}")
-        print(f"  FP16:       {b['fp16']}")
-        print(f"  FP32:       {b['fp32']}")
-        print("==========================================")
+        print(f"GPU {self.gpu_id} | {i['model']} ({i['arch']})")
+        print(f"VRAM: {m['mem_usage']['used_visible_vram']['value']} MB used")
+        print(f"Power: {m['power']['socket_power']['value']} W")
+        print(f"Temp: {m['temperature']['edge']['value']} C")
 
 def main():
-    parser = argparse.ArgumentParser(description="AMD GPU Telemetry and MFU Tool")
-    parser.add_argument("-g", "--gpu-id", type=int, default=0, help="GPU index to query (default: 0)")
+    parser = argparse.ArgumentParser(description="AMD GPU Telemetry")
+    parser.add_argument("-g", "--gpu-id", type=int, default=0)
     args = parser.parse_args()
 
-    try:
-        gpu = AMDGPU(gpu_id=args.gpu_id)
-        gpu.print_report()
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+    # The instance is the link: it holds the gpu_id and provides the methods
+    gpu = AMDGPU(gpu_id=args.gpu_id)
+    gpu.print_report()
 
 if __name__ == "__main__":
     main()
