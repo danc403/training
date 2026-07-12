@@ -18,23 +18,22 @@ from trainer.nvidia_gpu import NVIDIAGPU
 from trainer.amd_gpu import AMDGPU
 
 def check_memory(step, hardware_handler=None):
-    """Prints a terse memory snapshot, using AMD/NVIDIA specific handlers to bypass buggy internal reporting."""
-    # Priority 1: Hardware Handler (the fix for buggy ROCm monitoring)
-    if hardware_handler and hasattr(hardware_handler, '_refresh'):
+    """Prints a memory snapshot using the updated AMD/NVIDIA handlers."""
+    # Priority 1: Hardware Handler (now calling get_telemetry for AMD)
+    if hardware_handler and hasattr(hardware_handler, 'get_telemetry'):
         try:
-            # We call the driver-level refresh which you have already mapped to amd-smi
-            gpu_data = hardware_handler._refresh()
-            used_vram = gpu_data["vram"]["used"]["value"] / 1024
-            total_vram = gpu_data["vram"]["size"]["value"] / 1024
-            print(f"--- Step {step} Memory: {used_vram:.2f}GB / {total_vram:.2f}GB VRAM used (Driver API) ---")
+            # AMD flow: fetch real-time metrics
+            data = hardware_handler.get_telemetry()
+            used_mb = data["vram"]["used"]["value"]
+            total_mb = data["vram"]["total"]["value"]
+            print(f"--- Step {step} Memory: {used_mb/1024:.2f}GB / {total_mb/1024:.2f}GB VRAM used (Driver API) ---")
         except Exception as e:
-            # Fallback to standard torch if the specific driver call fails
             print(f"--- Step {step} Memory: [Driver Query Failed: {e}] ---")
             if torch.cuda.is_available():
                 allocated = torch.cuda.memory_allocated() / 1024**3
                 print(f"--- Step {step} Memory (Fallback): {allocated:.2f}GB allocated ---")
     
-    # Priority 2: Standard Torch Fallback
+    # Priority 2: Standard Torch Fallback (NVIDIA or unhandled)
     elif torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated() / 1024**3
         reserved = torch.cuda.memory_reserved() / 1024**3

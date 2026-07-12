@@ -27,13 +27,34 @@ class AMDGPU:
         self.data = self._refresh()
 
     def _refresh(self):
-        """Fetches fresh data from amd-smi."""
+        """Fetches static hardware data from amd-smi."""
         try:
             cmd = ["amd-smi", "static", "-g", str(self.gpu_id), "--json"]
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             return json.loads(result.stdout)["gpu_data"][0]
         except (subprocess.CalledProcessError, KeyError, json.JSONDecodeError) as e:
-            raise RuntimeError(f"Failed to query amd-smi for GPU {self.gpu_id}: {e}")
+            raise RuntimeError(f"Failed to query amd-smi static for GPU {self.gpu_id}: {e}")
+
+    def get_telemetry(self):
+        """Fetches dynamic real-time metrics for VRAM, Power, Temp, and Fan."""
+        try:
+            # Aggregate command to get all metrics in one call
+            cmd = ["amd-smi", "metric", "-m", "-p", "-t", "-f", "-g", str(self.gpu_id), "--json"]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            metrics = json.loads(result.stdout)["gpu_metrics"][0]
+            
+            return {
+                "vram": {
+                    "used": metrics["mem_usage"]["used_visible_vram"],
+                    "total": metrics["mem_usage"]["total_visible_vram"],
+                    "free": metrics["mem_usage"]["free_visible_vram"]
+                },
+                "power": metrics["power"]["socket_power"],
+                "temp": metrics["temperature"]["edge"],
+                "fan": metrics["fan"]["usage"]
+            }
+        except (subprocess.CalledProcessError, KeyError, json.JSONDecodeError) as e:
+            raise RuntimeError(f"Failed to query amd-smi metrics for GPU {self.gpu_id}: {e}")
 
     @property
     def info(self):
@@ -54,14 +75,14 @@ class AMDGPU:
 
     @property
     def peak_tflops(self):
-        """Dynamically returns the FP16 peak TFLOPS for the detected arch."""
-        # We use FP16 as the reference for BF16 operations
         return self.info["baselines"].get("fp16", 0.0)
 
     def print_report(self):
-        """Prints a human-readable summary to console."""
+        """Prints a human-readable summary including static data and real-time telemetry."""
         i = self.info
         b = i["baselines"]
+        m = self.get_telemetry()
+        
         print("==========================================")
         print(f"          AMD GPU STATUS REPORT           ")
         print("==========================================")
@@ -69,7 +90,9 @@ class AMDGPU:
         print(f"Model:        {i['model']}")
         print(f"Architecture: {i['arch']}")
         print(f"Bus (BDF):    {i['bdf']}")
-        print(f"VRAM Total:   {i['vram_gb']} GB")
+        print(f"VRAM:         {m['vram']['used']['value']} / {m['vram']['total']['value']} {m['vram']['used']['unit']} (Free: {m['vram']['free']['value']})")
+        print(f"Power:        {m['power']['value']} {m['power']['unit']}")
+        print(f"Temp (Edge):  {m['temp']['value']} {m['temp']['unit']}")
         print(f"PCIe Link:    {i['pcie_link']}")
         print("------------------------------------------")
         print(f"MFU Baselines (TFLOPS):")
