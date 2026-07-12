@@ -4,9 +4,10 @@
 
 DATA_DIR="./instruct"
 CKPT_BASE="./checkpoints"
+FORCE_CPU_LOADER="false"
 
 # Inputs from Command Line
-MODEL_NAME=${1:-"sprite"}      # Defaults to sprite if $1 is empty
+MODEL_NAME=${1:-"sprite"}     # Defaults to sprite if $1 is empty
 TRAINING_TYPE=${2:-"base"}    # Defaults to base if $2 is empty
 EPOCHS=${3:-4}                # Defaults to 4 if $3 is empty (interpreted as additional epochs if resuming)
 
@@ -23,7 +24,7 @@ elif command -v amd-smi &> /dev/null; then
     # Extract VRAM size in MB
     VRAM_MB=$(amd-smi static -g 0 --json | jq -r '.gpu_data[0].vram.size.value')
     # Convert to GB (Integer division)
-    VRAM_GB=$((VRAM_MB / 1024))
+    VRAM_GB=$(( (VRAM_MB + 1023) / 1024 ))
 else
     DEVICE="cpu" 
     GPU_NAME="None/CPU"
@@ -61,9 +62,7 @@ fi
 # --- 2. Set Micro-Batch Size based on Model & VRAM ---
 case $MODEL_NAME in
     "sprite")
-        #if [ "$VRAM_GB" -le 12 ]; then GLOBAL_BATCH_SIZE=32768; else GLOBAL_BATCH_SIZE=65536; fi
         GLOBAL_BATCH_SIZE=65536;
-        #if [ "$VRAM_GB" -le 12 ]; then MICRO_BATCH_SIZE=8; else MICRO_BATCH_SIZE=16; fi
         MICRO_BATCH_SIZE=8;
         LEARNING_RATE=0.0003
         ;;
@@ -101,7 +100,7 @@ ADDITIONAL_STEPS=$((STEPS_PER_EPOCH * EPOCHS))
 MAX_STEPS=$((COMPLETED_STEPS + ADDITIONAL_STEPS))
 
 # Adjust Warmup based on the new steps being added
-WARMUP_STEPS=200 #$((ADDITIONAL_STEPS / 10))
+WARMUP_STEPS=200
 WEIGHT_DECAY=0.05
 
 # 4. Frequency Control
@@ -144,17 +143,23 @@ elif [ "$DEVICE" == "rocm" ]; then
     fi
     # Helps stability of the ROCm caching allocator
     export HIP_FORCE_DEV_KERNELS=1
+    # Force the loader to prefer the ROCm-specific libraries first
+    export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libamdhip64.so.6
 fi
 
-#cheat, must fix.
-DEVICE="cuda"
-# Force the loader to prefer the ROCm-specific libraries first
-export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libamdhip64.so.6
+# #cheat, must fix.
+# DEVICE="cuda"
 
 rm -rf ~/.cache/torch/kernels
 rm -rf ~/.cache/triton
 rm -rf ~/.triton/cache
 rm -rf /tmp/torchinductor_*
+
+# Prepare CPU loader flag if enabled
+LOADER_ARG=""
+if [ "$FORCE_CPU_LOADER" == "true" ]; then
+    LOADER_ARG="--force_cpu_loader"
+fi
 
 python3 -m trainer.tune \
     --model_name "$MODEL_NAME" \
@@ -169,6 +174,7 @@ python3 -m trainer.tune \
     --log_interval "$LOG_FREQ" \
     --save_interval "$SAVE_FREQ" \
     --device "$DEVICE" \
+    $LOADER_ARG \
     $RESUME_ARG \
     $freeze_arg \
     $no_opt \

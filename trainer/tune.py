@@ -2,7 +2,6 @@ import os
 import sys
 import argparse
 import time
-import json
 import torch
 import torch.nn as nn
 
@@ -45,8 +44,14 @@ def calculate_mfu(model, tokens_per_sec, peak_flops):
     # Note: peak_flops from handlers is now TFLOPS (float), so multiply by 1e12
     return (current_flops / (peak_flops * 1e12)) * 100
 
+def move_to_device(tensor, device):
+    """Conditionally transfers tensors to device only if not already resident."""
+    if tensor.device.type != device:
+        return tensor.to(device, non_blocking=True)
+    return tensor
+
 def main():
-    parser = argparse.ArgumentParser(description="iDragonfly Nymph Training Orchestrator (Pure Eager)")
+    parser = argparse.ArgumentParser(description="iDragonfly Nymph Tuning Orchestrator (Pure Eager)")
     
     # Model and Path Arguments
     parser.add_argument("--model_name", type=str, required=True, help="Specific IDG model: sprite, nymph, dragonfly, or wyrm")
@@ -71,6 +76,7 @@ def main():
     parser.add_argument("--device", type=str, default="cuda", help="Device to use (cuda/cpu/rocm)")
     parser.add_argument("--freeze", action="store_true", help="Enable legacy bottom-half layer and embedding freezing")
     parser.add_argument("--no_opt", action="store_true", help="Do not load optimizer state from checkpoint")
+    parser.add_argument("--force_cpu_loader", action="store_true", help="Force dataset residency in System RAM")
     
     args = parser.parse_args()
 
@@ -119,7 +125,13 @@ def main():
     
     # 3. Data Loading
     ctx_len = config["max_position_embeddings"]
-    train_loader = get_dataloader(args.data_path, ctx_len, args.batch_size)
+    train_loader = get_dataloader(
+        args.data_path, 
+        ctx_len, 
+        args.batch_size, 
+        device=actual_device,
+        force_cpu_loader=args.force_cpu_loader
+    )
     
     # 4. Optimizer Configuration
     tokens_per_sample = ctx_len - 1
@@ -201,7 +213,7 @@ def main():
     sys.stdout.flush()
     
     # Determine Autocast Device Type
-    autocast_device = "cuda" if actual_device == "cuda" else "cuda"
+    autocast_device = "cuda" if actual_device in ["cuda", "hip"] else "cpu"
     
     while step < args.max_steps:
         t0 = time.time()
@@ -215,7 +227,10 @@ def main():
                 data_iter = iter(train_loader)
                 x, y, mask = next(data_iter)
                 
-            x, y, mask = x.to(actual_device, non_blocking=True), y.to(actual_device, non_blocking=True), mask.to(actual_device, non_blocking=True)
+            # Conditional Transfer
+            x = move_to_device(x, actual_device)
+            y = move_to_device(y, actual_device)
+            mask = move_to_device(mask, actual_device)
             
             # Pure PyTorch Autocast for production stability
             with torch.amp.autocast(device_type=autocast_device, dtype=torch.bfloat16):
@@ -237,21 +252,12 @@ def main():
                 # Numerical Stability: Cast to FP32 for softmax/log operations
                 flat_logits = flat_logits.to(torch.float32)
 
-                # Diagnostic Check for Logit Explosion
-                if step == 0 and micro_step == 0:
-                    l_max = flat_logits.max().item()
-                    t_max = flat_labels.max().item()
-                    if t_max >= v_size or abs(l_max) > 20.0:
-                        print(f"DIAGNOSTIC: Vocab {v_size} | Target {t_max} | Logit Peak {l_max:.2f}")
-                        sys.stdout.flush()
-
                 # Calculate loss in float32
                 loss_raw = nn.functional.cross_entropy(flat_logits, flat_labels, reduction='none')
                 
                 # Weighted Masking with Clamping for stability
                 mask_sum = flat_mask.sum()
                 if mask_sum < 1.0:
-                    # If micro-batch is effectively empty/all masked, produce zero-gradient loss
                     loss = (logits.sum() * 0.0)
                 else:
                     loss = (loss_raw * flat_mask).sum() / (mask_sum + 1e-8)

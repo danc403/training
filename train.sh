@@ -6,8 +6,13 @@ DATA_DIR="./base"
 CKPT_BASE="./checkpoints"
 extra_mask="0.235" #percent extra random mask (decays to 0.0 by start of last epoch)
 
+# --- Data Loader Configuration ---
+# Set FORCE_CPU_LOADER to "true" to pin the dataset in System RAM, bypassing VRAM limits.
+# Set to "false" to allow standard GPU-resident data loading.
+FORCE_CPU_LOADER="false"
+
 # Inputs from Command Line
-MODEL_NAME=${1:-"sprite"}     # Defaults to sprite if $1 is empty
+MODEL_NAME=${1:-"sprite"}      # Defaults to sprite if $1 is empty
 TRAINING_TYPE=${2:-"base"}    # Defaults to base if $2 is empty
 EPOCHS=${3:-4}                # Defaults to 4 if $3 is empty
 
@@ -19,14 +24,14 @@ if command -v nvidia-smi &> /dev/null; then
     VRAM_GB=$((VRAM_MIB / 1024))
 elif command -v amd-smi &> /dev/null; then
     DEVICE="rocm"
-# Extract GPU Name
-GPU_NAME=$(amd-smi static -g 0 --json | jq -r '.gpu_data[0].asic.market_name')
+    # Extract GPU Name
+    GPU_NAME=$(amd-smi static -g 0 --json | jq -r '.gpu_data[0].asic.market_name')
 
-# Extract VRAM size in MB
-VRAM_MB=$(amd-smi static -g 0 --json | jq -r '.gpu_data[0].vram.size.value')
+    # Extract VRAM size in MB
+    VRAM_MB=$(amd-smi static -g 0 --json | jq -r '.gpu_data[0].vram.size.value')
 
-# Convert to GB (Integer division)
-VRAM_GB=$((VRAM_MB / 1024))
+    # Convert to GB (Integer division)
+    VRAM_GB=$(( (VRAM_MB + 1023) / 1024 ))
 else
     DEVICE="cpu" 
     GPU_NAME="None/CPU"
@@ -60,9 +65,7 @@ fi
 # --- 2. Set Micro-Batch Size based on Model & VRAM ---
 case $MODEL_NAME in
     "sprite")
-        #if [ "$VRAM_GB" -le 12 ]; then GLOBAL_BATCH_SIZE=65536; else GLOBAL_BATCH_SIZE=131072; fi
         GLOBAL_BATCH_SIZE=65536;
-        #if [ "$VRAM_GB" -le 12 ]; then MICRO_BATCH_SIZE=8; else MICRO_BATCH_SIZE=16; fi
         MICRO_BATCH_SIZE=12;
         LEARNING_RATE=0.0014
         LEARNING_RATE_TUNE=0.0003
@@ -144,17 +147,23 @@ elif [ "$DEVICE" == "rocm" ]; then
     fi
     # Helps stability of the ROCm caching allocator
     export HIP_FORCE_DEV_KERNELS=1
+    # Force the loader to prefer the ROCm-specific libraries first
+    export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libamdhip64.so.6
 fi
 
-#cheat, must fix.
-DEVICE="cuda"
-# Force the loader to prefer the ROCm-specific libraries first
-export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libamdhip64.so.6
+# # Commented out hacked force cuda
+# DEVICE="cuda"
 
 rm -rf ~/.cache/torch/kernels
 rm -rf ~/.cache/triton
 rm -rf ~/.triton/cache
 rm -rf /tmp/torchinductor_*
+
+# Prepare CPU loader flag if enabled
+LOADER_ARG=""
+if [ "$FORCE_CPU_LOADER" == "true" ]; then
+    LOADER_ARG="--force_cpu_loader"
+fi
 
 python3 -m trainer.train \
     --model_name "$MODEL_NAME" \
@@ -169,8 +178,8 @@ python3 -m trainer.train \
     --log_interval "$LOG_FREQ" \
     --save_interval "$SAVE_FREQ" \
     --device "$DEVICE" \
+    $LOADER_ARG \
     $RESUME_ARG \
     --max_extra_mask  $extra_mask \
     --use_loss_controller \
     $COMPILE_FLAG
-

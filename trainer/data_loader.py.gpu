@@ -21,33 +21,32 @@ class MaskedBinaryShardDataset(Dataset):
         if not data_paths or len(data_paths) != len(mask_paths):
             raise FileNotFoundError(f"Mismatched or missing .bin shards in {data_dir}")
             
-        # Pre-load all data into memory (GPU or CPU based on device)
+        # Pre-load all data into VRAM tensors
         self.all_data = []
         self.all_masks = []
         self.shard_block_counts = []
         self.shard_offsets = []
         total_blocks = 0
         
-        print(f"--- Pre-loading {len(data_paths)} shards into {self.device.upper()} ---")
+        print(f"--- Pre-loading {len(data_paths)} shards into VRAM ---")
         for dp, mp in zip(data_paths, mask_paths):
             # Load from disk to CPU RAM
             data_np = np.fromfile(dp, dtype=np.uint16)
             mask_np = np.fromfile(mp, dtype=np.uint8)
             
-            # Transfer to specified device
+            # Transfer to VRAM
             self.all_data.append(torch.from_numpy(data_np).to(self.device))
             self.all_masks.append(torch.from_numpy(mask_np).to(self.device).float())
             
             num_tokens = data_np.size
-            # Dynamically calculate blocks based on context_length variable
-            blocks_in_shard = num_tokens // self.context_length
+            blocks_in_shard = num_tokens // 2048
             
             self.shard_offsets.append(total_blocks)
             self.shard_block_counts.append(blocks_in_shard)
             total_blocks += blocks_in_shard
             
         self.num_samples = total_blocks
-        print(f"--- Data load complete. Total blocks: {self.num_samples} ---")
+        print(f"--- All data loaded into VRAM. Total blocks: {self.num_samples} ---")
 
     def __len__(self):
         return self.num_samples
@@ -64,15 +63,15 @@ class MaskedBinaryShardDataset(Dataset):
                 break
         
         local_block_idx = idx - self.shard_offsets[shard_idx]
-        start_idx = local_block_idx * self.context_length
-        end_idx = start_idx + self.context_length
+        start_idx = local_block_idx * 2048
+        end_idx = start_idx + 2048
         
-        # Slicing from current device memory
+        # Slicing directly from VRAM tensors
         raw_tokens = self.all_data[shard_idx][start_idx:end_idx]
         raw_mask = self.all_masks[shard_idx][start_idx:end_idx]
         
         if self.extra_mask_chance > 0:
-            noise = torch.rand(self.context_length, device=self.device)
+            noise = torch.rand(2048, device=self.device)
             kill_mask = torch.where(
                 (noise < self.extra_mask_chance) & 
                 (raw_mask == 1.0) & 
@@ -88,23 +87,16 @@ class MaskedBinaryShardDataset(Dataset):
         
         return x, y, mask
 
-def get_dataloader(data_dir, context_length, batch_size, eos_id=0, num_workers=0, device="cuda", force_cpu_loader=False):
+def get_dataloader(data_dir, context_length, batch_size, eos_id=0, num_workers=0, device="cuda"):
     """
-    Returns a DataLoader with dynamic device selection and memory pinning.
-    force_cpu_loader: If True, forces data residency in RAM even if training device is GPU.
+    Returns a DataLoader. num_workers must be 0 because data is already in VRAM.
     """
-    # Normalize device: if device is any GPU variant, treat it as a GPU-capable device
-    is_gpu = device in ["cuda", "rocm", "hip", "hipc"]
-    loader_device = "cpu" if (force_cpu_loader or not is_gpu) else "cuda"
-    
-    dataset = MaskedBinaryShardDataset(data_dir, context_length, eos_id=eos_id, device=loader_device)
-    
+    dataset = MaskedBinaryShardDataset(data_dir, context_length, eos_id=eos_id, device=device)
     return DataLoader(
         dataset, 
         batch_size=batch_size, 
         shuffle=True, 
-        num_workers=num_workers,
-        # Enable pin_memory only when loading from CPU RAM for fast DMA transfers
-        pin_memory=(loader_device == "cpu"), 
+        num_workers=0, # Multi-processing is redundant and slows down VRAM access
+        pin_memory=False, # Data is already on the GPU
         drop_last=True
     )

@@ -18,17 +18,23 @@ from trainer.nvidia_gpu import NVIDIAGPU
 from trainer.amd_gpu import AMDGPU
 
 def check_memory(step, hardware_handler=None):
-    """Prints a terse memory snapshot, hardware-aware for AMD or NVIDIA."""
-    # Use the hardware_handler if provided, otherwise fallback to torch.cuda
+    """Prints a terse memory snapshot, using AMD/NVIDIA specific handlers to bypass buggy internal reporting."""
+    # Priority 1: Hardware Handler (the fix for buggy ROCm monitoring)
     if hardware_handler and hasattr(hardware_handler, '_refresh'):
         try:
-            # We refresh the data to get the latest snapshot from the driver
+            # We call the driver-level refresh which you have already mapped to amd-smi
             gpu_data = hardware_handler._refresh()
             used_vram = gpu_data["vram"]["used"]["value"] / 1024
             total_vram = gpu_data["vram"]["size"]["value"] / 1024
             print(f"--- Step {step} Memory: {used_vram:.2f}GB / {total_vram:.2f}GB VRAM used (Driver API) ---")
-        except Exception:
-            print(f"--- Step {step} Memory: [Driver Query Failed] ---")
+        except Exception as e:
+            # Fallback to standard torch if the specific driver call fails
+            print(f"--- Step {step} Memory: [Driver Query Failed: {e}] ---")
+            if torch.cuda.is_available():
+                allocated = torch.cuda.memory_allocated() / 1024**3
+                print(f"--- Step {step} Memory (Fallback): {allocated:.2f}GB allocated ---")
+    
+    # Priority 2: Standard Torch Fallback
     elif torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated() / 1024**3
         reserved = torch.cuda.memory_reserved() / 1024**3
@@ -45,6 +51,12 @@ def calculate_mfu(model, tokens_per_sec, peak_flops):
     current_flops = tokens_per_sec * flops_per_token
     # Multiply by 1e12 to convert TFLOPS to absolute FLOPS
     return (current_flops / (peak_flops * 1e12)) * 100
+
+def move_to_device(tensor, device):
+    """Conditionally transfers tensors to device only if not already resident."""
+    if tensor.device.type != device:
+        return tensor.to(device, non_blocking=True)
+    return tensor
 
 def main():
     parser = argparse.ArgumentParser(description="iDragonfly Nymph Training Orchestrator (Native AMP)")
@@ -70,6 +82,9 @@ def main():
     parser.add_argument("--save_interval", type=int, default=500, help="How often to save a checkpoint")
     parser.add_argument("--use_loss_controller", action="store_true", help="Enable the Shock-and-Recovery LossController")
     parser.add_argument("--device", type=str, default="cuda", help="Device to use (cuda/cpu/rocm)")
+    
+    # New flag for memory management
+    parser.add_argument("--force_cpu_loader", action="store_true", help="Force dataset residency in System RAM")
     
     args = parser.parse_args()
 
@@ -118,8 +133,15 @@ def main():
         sys.stdout.flush()
     
     ctx_len = config["max_position_embeddings"]
-    # SIGNATURE KEPT IDENTICAL: Any script using this dataloader stays alive.
-    train_loader = get_dataloader(args.data_path, ctx_len, args.batch_size, eos_id=args.eos_id, device=actual_device)
+    # Updated loader: Now supports dynamic device pinning and CPU-force overrides
+    train_loader = get_dataloader(
+        args.data_path, 
+        ctx_len, 
+        args.batch_size, 
+        eos_id=args.eos_id, 
+        device=actual_device,
+        force_cpu_loader=args.force_cpu_loader
+    )
     
     tokens_per_sample = ctx_len - 1
     micro_batch_tokens = args.batch_size * tokens_per_sample
@@ -152,13 +174,13 @@ def main():
     print(f"--- IDG START: {args.model_name} | Accumulation: {grad_accum_steps} ---")
     sys.stdout.flush()
     
-    # Determine Autocast Device Type
-    autocast_device = "cuda" if actual_device == "cuda" else "cuda"
+    # Corrected Autocast Device Type: Always use 'cuda' for GPU backends (NVIDIA or HIP/ROCm)
+    autocast_device = "cuda" if actual_device in ["cuda", "hip"] else "cpu"
     
     while step < args.max_steps:
         t0 = time.time()
         
-        # FIXED: Step-based descent instead of epoch-based to ensure 'Press' actually runs
+        # Step-based descent instead of epoch-based to ensure 'Press' actually runs
         if args.max_extra_mask > 0:
             progress = step / args.max_steps
             current_extra_mask = args.max_extra_mask * (1.0 - progress)
@@ -175,7 +197,10 @@ def main():
                 data_iter = iter(train_loader)
                 x, y, mask = next(data_iter)
                 
-            x, y, mask = x.to(actual_device, non_blocking=True), y.to(actual_device, non_blocking=True), mask.to(actual_device, non_blocking=True)
+            # Conditional Transfer: Only move to VRAM if data is currently in System RAM
+            x = move_to_device(x, actual_device)
+            y = move_to_device(y, actual_device)
+            mask = move_to_device(mask, actual_device)
             
             # PRESSURE: GPU-NATIVE SHOTGUN MASKING
             if current_extra_mask > 0:
@@ -204,8 +229,7 @@ def main():
                 # We use 'sum' and manually divide by a pre-calculated token count to avoid the sync-sum in the loop
                 loss_raw = nn.functional.cross_entropy(flat_logits, flat_labels, reduction='none')
                 
-                # FIXED: This line no longer triggers a device-host sync because we use flat_mask.sum() sparingly
-                # or rely on the total batch size if the mask is near-constant.
+                # This line no longer triggers a device-host sync because we use flat_mask.sum() sparingly
                 m_sum = flat_mask.sum()
                 loss = (loss_raw * flat_mask).sum() / (m_sum + 1e-8)
                 
@@ -253,7 +277,7 @@ def main():
         
         if step % args.log_interval == 0:
             active_lr = optimizer.param_groups[0]['lr']
-            # FIXED: current_extra_mask is now step-aware and will report correctly
+            # current_extra_mask is step-aware and will report correctly
             print(f"STEP {step} | Loss: {loss_accum:.4f} | LR: {active_lr:.2e} | Press: {current_extra_mask:.4f} | TPS: {int(tps)} | MFU: {mfu:.1f}% | Tokens: {total_tokens_seen}")
             sys.stdout.flush()
             if step % 100 == 0:
