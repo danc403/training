@@ -98,7 +98,7 @@ def main():
     model.to(device=actual_device, dtype=torch.bfloat16)
     
     # Compile the model for performance
-    model = torch.compile(model, backend="inductor", mode="reduce-overhead")
+    model = torch.compile(model, backend="inductor", mode="default")
 
     # Force-prime the allocator to prevent fragmentation
     if "hip" in actual_device:
