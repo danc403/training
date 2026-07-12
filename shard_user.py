@@ -148,7 +148,7 @@ def run_sharding(is_tune_mode):
         newline_id = find_special_token(tokenizer, ["\n"], "\n")
         
     assistant_marker_ids = [asst_id]
-    all_dataset_files = glob.glob("./datasets/user_data/*.jsonl")
+    all_dataset_files = sorted(glob.glob("./datasets/user_data/*.jsonl"))
 
     # Metadata tracking for balanced dataset consumption
     file_metadata = {}
