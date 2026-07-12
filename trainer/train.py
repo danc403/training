@@ -94,7 +94,7 @@ def main():
         actual_device = "cuda"
     elif "rocm" in args.device or "hip" in args.device:
         hardware_handler = AMDGPU()
-        actual_device = "hip"
+        actual_device = "cuda"
     else:
         hardware_handler = None
         actual_device = "cpu"
@@ -116,7 +116,7 @@ def main():
     model = torch.compile(model, backend="inductor", mode="default")
 
     # Force-prime the allocator to prevent fragmentation
-    if "hip" in actual_device:
+    if "rocm" in args.device or "hip" in args.device:
         print("Pre-allocating anchor buffer to prevent VRAM fragmentation...")
         # Allocate 4GB to pin it as "active" memory
         anchor_buffer = torch.randn(1024 * 1024 * 1024, device=actual_device).repeat(4)
