@@ -8,10 +8,8 @@ import sys
 class AMDGPU:
     """
     Module for AMD GPU telemetry and MFU baseline lookups.
-    Importable into larger packages or executable as a standalone CLI tool.
     """
     
-    # Source of Truth for MFU baselines (TFLOPS)
     LOOKUP = {
         "gfx908":  {"name": "MI100",           "fp8": 0,    "fp16": 184.6, "fp32": 46.1},
         "gfx90a":  {"name": "MI250X",          "fp8": 0,    "fp16": 383.0, "fp32": 95.7},
@@ -22,8 +20,21 @@ class AMDGPU:
         "gfx1200": {"name": "RDNA 4 (Navi 44)", "fp8": 0,    "fp16": 50.0,  "fp32": 25.0}
     }
 
-    def __init__(self, gpu_id=0):
-        self.gpu_id = gpu_id
+    @staticmethod
+    def get_gpu_list():
+        """Returns a list of all detected GPU IDs."""
+        cmd = ["amd-smi", "static", "--json"]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        data = json.loads(result.stdout)
+        return [gpu["gpu"] for gpu in data["gpu_data"]]
+
+    def __init__(self, gpu_id=None):
+        # If no ID provided, pick the first one found
+        if gpu_id is None:
+            gpus = self.get_gpu_list()
+            self.gpu_id = gpus[0] if gpus else 0
+        else:
+            self.gpu_id = gpu_id
         self.data = self._refresh()
 
     def _refresh(self):
@@ -73,18 +84,12 @@ class AMDGPU:
             "baselines": self.LOOKUP.get(arch, {"fp8": 0, "fp16": 0, "fp32": 0})
         }
 
-    @property
-    def peak_tflops(self):
-        return self.info["baselines"].get("fp16", 0.0)
-
     def print_report(self):
-        """Prints a human-readable summary to console."""
         i = self.info
         b = i["baselines"]
-        print("==========================================")
-        print(f"          AMD GPU STATUS REPORT           ")
-        print("==========================================")
-        print(f"GPU ID:       {i['gpu_id']}")
+        print(f"==========================================")
+        print(f"          AMD GPU {i['gpu_id']} STATUS REPORT           ")
+        print(f"==========================================")
         print(f"Model:        {i['model']}")
         print(f"Architecture: {i['arch']}")
         print(f"Bus (BDF):    {i['bdf']}")
@@ -99,21 +104,25 @@ class AMDGPU:
 
 def main():
     parser = argparse.ArgumentParser(description="AMD GPU Telemetry and MFU Tool")
-    parser.add_argument("-g", "--gpu-id", type=int, default=0, help="GPU index to query (default: 0)")
-    parser.add_argument("-p", "--power", action="store_true", help="Get power metrics")
-    parser.add_argument("-t", "--temp", action="store_true", help="Get temperature metrics")
-    parser.add_argument("-f", "--fan", action="store_true", help="Get fan metrics")
-    parser.add_argument("-m", "--mem", action="store_true", help="Get memory metrics")
+    parser.add_argument("-g", "--gpu-id", type=int, help="GPU index to query")
+    parser.add_argument("-l", "--list", action="store_true", help="List all available GPU IDs")
+    parser.add_argument("-p", "--power", action="store_true")
+    parser.add_argument("-t", "--temp", action="store_true")
+    parser.add_argument("-f", "--fan", action="store_true")
+    parser.add_argument("-m", "--mem", action="store_true")
     args = parser.parse_args()
+
+    if args.list:
+        print(f"Available GPUs: {AMDGPU.get_gpu_list()}")
+        sys.exit(0)
 
     try:
         gpu = AMDGPU(gpu_id=args.gpu_id)
         if args.power: print(json.dumps(gpu.get_power(), indent=4))
-        if args.temp: print(json.dumps(gpu.get_temperature(), indent=4))
-        if args.fan: print(json.dumps(gpu.get_fan(), indent=4))
-        if args.mem: print(json.dumps(gpu.get_memory(), indent=4))
-        if not any([args.power, args.temp, args.fan, args.mem]):
-            gpu.print_report()
+        elif args.temp: print(json.dumps(gpu.get_temperature(), indent=4))
+        elif args.fan: print(json.dumps(gpu.get_fan(), indent=4))
+        elif args.mem: print(json.dumps(gpu.get_memory(), indent=4))
+        else: gpu.print_report()
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
