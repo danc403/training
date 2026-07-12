@@ -32,6 +32,18 @@ class NVIDIAGPU:
                 return val # Return as TFLOPS float
         return 142.0 # Fallback (3090 baseline)
 
+def get_memory(self):
+        """Returns memory usage in a structure compatible with the AMDGPU logic."""
+        # torch.cuda returns bytes; we represent them as a dictionary to match AMD's API
+        allocated = torch.cuda.memory_allocated(self.gpu_id)
+        reserved = torch.cuda.memory_reserved(self.gpu_id)
+        total = torch.cuda.get_device_properties(self.gpu_id).total_memory
+        
+        return {
+            "used_visible_vram": {"value": allocated / (1024**2)}, # Converting to MB
+            "total_visible_vram": {"value": total / (1024**2)}    # Converting to MB
+        }
+
     def print_info(self):
         print(f"Device: {self.name}")
         print(f"Peak Baseline: {self.peak_tflops:.1f} TFLOPS")

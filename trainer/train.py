@@ -18,26 +18,31 @@ from trainer.nvidia_gpu import NVIDIAGPU
 from trainer.amd_gpu import AMDGPU
 
 def check_memory(step, hardware_handler=None):
-    """Prints a memory snapshot using the updated AMD/NVIDIA handlers."""
-    # Priority 1: Hardware Handler (now calling get_telemetry for AMD)
-    if hardware_handler and hasattr(hardware_handler, 'get_telemetry'):
-        try:
-            # AMD flow: fetch real-time metrics
-            data = hardware_handler.get_telemetry()
-            used_mb = data["vram"]["used"]["value"]
-            total_mb = data["vram"]["total"]["value"]
-            print(f"--- Step {step} Memory: {used_mb/1024:.2f}GB / {total_mb/1024:.2f}GB VRAM used (Driver API) ---")
-        except Exception as e:
-            print(f"--- Step {step} Memory: [Driver Query Failed: {e}] ---")
-            if torch.cuda.is_available():
-                allocated = torch.cuda.memory_allocated() / 1024**3
-                print(f"--- Step {step} Memory (Fallback): {allocated:.2f}GB allocated ---")
+    """Prints a memory snapshot using the appropriate hardware handler."""
     
-    # Priority 2: Standard Torch Fallback (NVIDIA or unhandled)
+    if hardware_handler:
+        # AMD Handler Logic
+        if isinstance(hardware_handler, AMDGPU):
+            try:
+                mem_data = hardware_handler.get_memory()
+                used = mem_data["used_visible_vram"]["value"]
+                total = mem_data["total_visible_vram"]["value"]
+                print(f"--- Step {step} Memory: {used/1024:.2f}GB / {total/1024:.2f}GB VRAM used")
+            except Exception as e:
+                print(f"--- Step {step} Memory: [AMD Driver Query Failed: {e}] ---")
+
+        # NVIDIA Handler Logic
+        elif isinstance(hardware_handler, NVIDIAGPU):
+            # Using PyTorch Cuda API which is the standard for NVIDIA
+            allocated = torch.cuda.memory_allocated() / 1024**3
+            reserved = torch.cuda.memory_reserved() / 1024**3
+            print(f"--- Step {step} Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved")
+            
+    # Fallback if no hardware_handler object exists
     elif torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated() / 1024**3
         reserved = torch.cuda.memory_reserved() / 1024**3
-        print(f"--- Step {step} Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved ---")
+        print(f"--- Step {step} Memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved")
             
     sys.stdout.flush()
 

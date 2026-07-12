@@ -68,6 +68,13 @@ class AMDGPU:
         return self._get_metric("-m")["mem_usage"]
 
     @property
+    def peak_tflops(self):
+        """Returns the peak FP16 TFLOPS from the architecture baseline."""
+        asic = self.data["asic"]
+        arch = asic["target_graphics_version"]
+        return self.LOOKUP.get(arch, {}).get("fp16", 142.0)
+
+    @property
     def info(self):
         """Returns the full dictionary of hardware state and baselines."""
         asic = self.data["asic"]
@@ -88,7 +95,7 @@ class AMDGPU:
         i = self.info
         b = i["baselines"]
         print(f"==========================================")
-        print(f"          AMD GPU {i['gpu_id']} STATUS REPORT           ")
+        print(f"          AMD GPU {i['gpu_id']} STATUS REPORT            ")
         print(f"==========================================")
         print(f"Model:        {i['model']}")
         print(f"Architecture: {i['arch']}")
