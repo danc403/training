@@ -63,7 +63,7 @@ fi
 case $MODEL_NAME in
     "sprite")
         GLOBAL_BATCH_SIZE=65536;
-        MICRO_BATCH_SIZE=8;
+        MICRO_BATCH_SIZE=12;
         LEARNING_RATE=0.0003
         ;;
     "nymph")
