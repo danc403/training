@@ -26,35 +26,16 @@ MASK_DETERMINISTIC_RESPONSE = False
 
 # --- INJECTION VARIABLES ---
 INCLUDE_SUMMARIES = True
-# Controls frequency of non-instruct RAW_TEXT facts
-# Do not set to 0 or it will totally remove those rows from the shards.
-# setting to 1 is standard weighting (one time), 2 doubles injection, and 3 triples.
 FACT_WEIGHT = 4 
-# Max tokens for a raw text row to be eligible for weight boosting
 FACT_THRESHOLD = 128 
 
 # --- PROMPT VARIANTS ---
-POEM_PROMPTS = [
-    "Recite the poem titled {title}:",
-    "Tell me the poem {title}:",
-    "Provide the text for the poem {title}:"
-]
-BOOK_PROMPTS = [
-    "How does the book {title} begin?",
-    "Start a book titled {title}:",
-    "Give me the opening lines of {title}:"
-]
-SUMMARY_PROMPTS = [
-    "Summarize the work titled {title}:",
-    "Provide a summary of {title}:",
-    "Give me an overview of {title} by {author}:",
-    "What is {title} about?",
-    "Summarize {title} by {author}:"
-]
+POEM_PROMPTS = ["Recite the poem titled {title}:", "Tell me the poem {title}:", "Provide the text for the poem {title}:"]
+BOOK_PROMPTS = ["How does the book {title} begin?", "Start a book titled {title}:", "Give me the opening lines of {title}:"]
+SUMMARY_PROMPTS = ["Summarize the work titled {title}:", "Provide a summary of {title}:", "Give me an overview of {title} by {author}:", "What is {title} about?", "Summarize {title} by {author}:"]
 
 def get_poem_prompt(title): return random.choice(POEM_PROMPTS).format(title=title)
 def get_book_prompt(title): return random.choice(BOOK_PROMPTS).format(title=title)
-
 def get_summary_prompt(title, author):
     if author and author.strip(): valid_templates = SUMMARY_PROMPTS
     else: valid_templates = [p for p in SUMMARY_PROMPTS if "{author}" not in p]
@@ -163,8 +144,7 @@ def worker_task(file_path, is_tune_mode, eos_token_id, pad_token_id, user_id, as
             # --- FACT WEIGHTING INJECTION ---
             if "RAW_TEXT" in caps and "HAS_POEM" not in caps and "INSTRUCT" not in caps:
                 tks = tokenizer.encode(data["text"], add_special_tokens=False).ids
-                
-                # Mandatory original row processing
+                # Base row always added
                 base_msk = apply_random_base_mask([1]*(len(tks)+1), BASE_MASK_CHANCE)
                 row_candidates.append((tks + [eos_token_id], base_msk))
                 
@@ -176,7 +156,7 @@ def worker_task(file_path, is_tune_mode, eos_token_id, pad_token_id, user_id, as
                         s_tks = [user_id] + t_q + [newline_id, newline_id, asst_id] + t_ans + [eos_token_id]
                         row_candidates.append((s_tks, get_multi_mask(s_tks, assistant_marker_ids)))
                 else:
-                    # Apply weighting only if concise
+                    # Apply weighting ONLY if under threshold
                     if len(tks) < FACT_THRESHOLD:
                         for _ in range(FACT_WEIGHT - 1):
                             msk = apply_random_base_mask([1]*(len(tks)+1), BASE_MASK_CHANCE)
@@ -208,7 +188,7 @@ def run_sharding(is_tune_mode):
     worker_returns = pool.starmap(worker_task, tasks)
     pool.close(); pool.join()
     
-    stats = {"total_tokens": 0, "file_breakdown": {}}
+    stats = {"total_tokens": 0, "file_breakdown": {}, "shard_count": 0}
     shard_idx, tokens_in_shard = 0, 0
     f_d = open(os.path.join(output_dir, f"shard_{shard_idx}_data.bin"), "wb")
     f_m = open(os.path.join(output_dir, f"shard_{shard_idx}_mask.bin"), "wb")
@@ -257,7 +237,9 @@ def run_sharding(is_tune_mode):
         if len(b['t']) > 0: write_window(b['t'], b['m'])
     f_d.close(); f_m.close()
     
-    full_report = f"=== SHARDING REPORT: {output_dir.upper()} ===\nTotal Tokens: {stats['total_tokens']}\n"
+    stats["shard_count"] = shard_idx + 1
+    full_report = f"\n=== SHARDING REPORT: {output_dir.upper()} ===\n"
+    full_report += f"Total Tokens: {stats['total_tokens']}\nTotal Shards Created: {stats['shard_count']}\n"
     for f, s in stats["file_breakdown"].items():
         if s['raw'] > 0: full_report += f" - {f}: {s['kept']} kept / {s['raw']} raw\n"
     print(full_report)
