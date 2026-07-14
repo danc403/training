@@ -131,13 +131,18 @@ def main():
     if args.resume:
         print(f"Resuming from checkpoint: {args.resume}")
         checkpoint_data = torch.load(args.resume, map_location=actual_device, weights_only=True)
-        model.load_state_dict(checkpoint_data.get("model", checkpoint_data), strict=True)
+        model_state = checkpoint_data.get("model", checkpoint_data)
+        
+        # Strip "_orig_mod." prefix if it exists to match the raw model
+        new_state_dict = {k.replace("_orig_mod.", ""): v for k, v in model_state.items()}
+        
+        model.load_state_dict(new_state_dict, strict=True)
         start_step = checkpoint_data.get("step", 0)
         total_tokens_seen = checkpoint_data.get("total_tokens", 0)
         print(f"Successfully loaded weights. Resume step: {start_step}")
         sys.stdout.flush()
     
-    # Compile the model for performance (Moved Last)
+    # Compile the model for performance
     model = torch.compile(model, backend="inductor", mode="default")
     
     tokens_per_sample = ctx_len - 1
