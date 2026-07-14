@@ -66,7 +66,7 @@ fi
 case $MODEL_NAME in
     "sprite")
         GLOBAL_BATCH_SIZE=65536;
-        MICRO_BATCH_SIZE=14;
+        MICRO_BATCH_SIZE=13;
         LEARNING_RATE=0.0014
         LEARNING_RATE_TUNE=0.0003
         ;;
