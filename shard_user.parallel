@@ -26,6 +26,12 @@ MASK_DETERMINISTIC_RESPONSE = False
 
 # --- INJECTION VARIABLES ---
 INCLUDE_SUMMARIES = True
+# Controls frequency of non-instruct RAW_TEXT facts
+# Do not set to 0 or it will totally remove those rows from the shards.
+# setting to 1 is standard weighting (one time), 2 doubles injection, and 3 triples.
+FACT_WEIGHT = 2 
+# Max tokens for a raw text row to be eligible for weight boosting
+FACT_THRESHOLD = 256 
 
 # --- PROMPT VARIANTS ---
 POEM_PROMPTS = [
@@ -154,7 +160,8 @@ def worker_task(file_path, is_tune_mode, eos_token_id, pad_token_id, user_id, as
                 s_tks = [user_id] + t_q + [newline_id, newline_id, asst_id] + t_ans + [eos_token_id]
                 row_candidates.append((s_tks, get_multi_mask(s_tks, assistant_marker_ids)))
             
-            if "RAW_TEXT" in caps and "HAS_POEM" not in caps:
+            # --- FACT WEIGHTING INJECTION ---
+            if "RAW_TEXT" in caps and "HAS_POEM" not in caps and "INSTRUCT" not in caps:
                 tks = tokenizer.encode(data["text"], add_special_tokens=False).ids
                 if is_tune_mode:
                     if INCLUDE_SUMMARIES and "HAS_SUMMARY" in caps and "HAS_TITLE" in caps:
@@ -164,8 +171,11 @@ def worker_task(file_path, is_tune_mode, eos_token_id, pad_token_id, user_id, as
                         s_tks = [user_id] + t_q + [newline_id, newline_id, asst_id] + t_ans + [eos_token_id]
                         row_candidates.append((s_tks, get_multi_mask(s_tks, assistant_marker_ids)))
                 else:
-                    msk = apply_random_base_mask([1]*(len(tks)+1), BASE_MASK_CHANCE)
-                    row_candidates.append((tks + [eos_token_id], msk))
+                    # Apply multiplication logic for Base mode only
+                    injection_count = FACT_WEIGHT if len(tks) < FACT_THRESHOLD else 1
+                    for _ in range(injection_count):
+                        msk = apply_random_base_mask([1]*(len(tks)+1), BASE_MASK_CHANCE)
+                        row_candidates.append((tks + [eos_token_id], msk))
             
             for c_t, c_m in row_candidates:
                 results.append((c_t, c_m))
