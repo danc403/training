@@ -12,6 +12,7 @@ from trainer.model import NymphModel
 from trainer.optim import MuonAdamW
 from trainer.data_loader import get_dataloader
 from trainer.controller import LossController
+from trainer.early_stop import EarlyStopping
 
 # Import GPU handlers
 from trainer.nvidia_gpu import NVIDIAGPU
@@ -85,6 +86,10 @@ def main():
     parser.add_argument("--log_interval", type=int, default=1, help="How often to print metrics")
     parser.add_argument("--save_interval", type=int, default=500, help="How often to save a checkpoint")
     parser.add_argument("--use_loss_controller", action="store_true", help="Enable the Shock-and-Recovery LossController")
+    
+    # Early Stopping Configuration
+    parser.add_argument("--patience", type=int, default=5, help="Checkpoints to wait before early stop")
+    
     parser.add_argument("--device", type=str, default="cuda", help="Device to use (cuda/cpu/rocm)")
     
     # New flag for memory management
@@ -168,6 +173,7 @@ def main():
         optimizer.load_state_dict(checkpoint_data["optimizer"])
 
     loss_manager = LossController(optimizer=optimizer, save_interval=args.save_interval)
+    early_stopper = EarlyStopping(patience=args.patience, min_delta=0.0005)
     
     model.train()
     step = start_step
@@ -296,6 +302,13 @@ def main():
             }, checkpoint_path)
             mgr.save_production_assets(model_ckpt_path)
             print(f"--- Saved Checkpoint: {checkpoint_path} ---")
+            
+            # Early Stopping Check
+            if early_stopper.check(loss_accum, loss_manager):
+                print("--- [EARLY STOPPING] Plateau threshold reached. Finalizing training. ---")
+                sys.stdout.flush()
+                break
+            
             sys.stdout.flush()
             
         step += 1

@@ -171,7 +171,6 @@ def worker_task(file_path, is_tune_mode, eos_token_id, pad_token_id, user_id, as
                         s_tks = [user_id] + t_q + [newline_id, newline_id, asst_id] + t_ans + [eos_token_id]
                         row_candidates.append((s_tks, get_multi_mask(s_tks, assistant_marker_ids)))
                 else:
-                    # Apply multiplication logic for Base mode only
                     injection_count = FACT_WEIGHT if len(tks) < FACT_THRESHOLD else 1
                     for _ in range(injection_count):
                         msk = apply_random_base_mask([1]*(len(tks)+1), BASE_MASK_CHANCE)
@@ -254,7 +253,7 @@ def run_sharding(is_tune_mode):
     
     full_report = f"=== SHARDING REPORT: {output_dir.upper()} ===\nTotal Tokens: {stats['total_tokens']}\n"
     for f, s in stats["file_breakdown"].items():
-        if s['kept'] > 0: full_report += f" - {f}: {s['kept']} kept / {s['raw']} raw\n"
+        if s['raw'] > 0: full_report += f" - {f}: {s['kept']} kept / {s['raw']} raw\n"
     print(full_report)
     with open(REPORT_FILE, "a") as rf: rf.write(full_report + "\n")
 
