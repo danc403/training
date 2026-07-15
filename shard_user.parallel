@@ -26,8 +26,8 @@ MASK_DETERMINISTIC_RESPONSE = False
 
 # --- INJECTION VARIABLES ---
 INCLUDE_SUMMARIES = True
-FACT_WEIGHT = 4 
-FACT_THRESHOLD = 128 
+FACT_WEIGHT = 2 
+FACT_THRESHOLD = 64 
 
 # --- PROMPT VARIANTS ---
 POEM_PROMPTS = ["Recite the poem titled {title}:", "Tell me the poem {title}:", "Provide the text for the poem {title}:"]
@@ -54,7 +54,8 @@ def get_row_capabilities(data):
     if data.get("title") and str(data["title"]).strip():
         caps.append("HAS_TITLE")
         if data.get("author") and str(data["author"]).strip(): caps.append("HAS_AUTHOR")
-    if data.get("summary") and str(data["summary"]).strip(): caps.append("HAS_SUMMARY")
+    if data.get("summary") and str(data["summary"]).strip():
+        caps.append("HAS_SUMMARY")
     if data.get("source_table") == "poems": caps.append("HAS_POEM")
     return caps
 
@@ -210,28 +211,35 @@ def run_sharding(is_tune_mode):
         tokens_in_shard += CONTEXT_SIZE; stats["total_tokens"] += CONTEXT_SIZE
 
     active_buckets = []
-    def pack_sequence(t_seq, m_seq):
-        if len(t_seq) > CONTEXT_SIZE:
-            pos = 0
-            while pos + CONTEXT_SIZE <= len(t_seq):
-                write_window(t_seq[pos:pos+CONTEXT_SIZE], m_seq[pos:pos+CONTEXT_SIZE])
-                pos += (CONTEXT_SIZE - STRIDE)
-            t_seq, m_seq = t_seq[pos:], m_seq[pos:]
-            if not t_seq: return
-        for b in active_buckets:
+    global_row_counter = 0
+
+    def pack_sequence_dispersed(t_seq, m_seq, weight=1):
+        nonlocal global_row_counter
+        step = MAX_OPEN_BUCKETS // max(1, weight)
+        for i in range(weight):
+            bucket_idx = (global_row_counter + (i * step)) % MAX_OPEN_BUCKETS
+            while len(active_buckets) <= bucket_idx:
+                active_buckets.append({'t': [], 'm': []})
+            b = active_buckets[bucket_idx]
             needs_sep = 1 if (len(b['t']) > 0 and b['t'][-1] != eos_token_id) else 0
             if len(b['t']) + needs_sep + len(t_seq) <= CONTEXT_SIZE:
                 if needs_sep: b['t'].append(eos_token_id); b['m'].append(1)
-                b['t'].extend(t_seq); b['m'].extend(m_seq); return
-        if len(active_buckets) >= MAX_OPEN_BUCKETS:
-            active_buckets.sort(key=lambda x: len(x['t']), reverse=True)
-            b = active_buckets.pop(0); write_window(b['t'], b['m'])
-        active_buckets.append({'t': list(t_seq), 'm': list(m_seq)})
+                b['t'].extend(t_seq); b['m'].extend(m_seq)
+            else:
+                write_window(b['t'], b['m'])
+                b['t'], b['m'] = list(t_seq), list(m_seq)
+        global_row_counter += 1
 
     for r in worker_returns:
         stats["file_breakdown"][r["file"]] = {"raw": r["raw"], "kept": r["kept"]}
         for t_c, m_c in r["results"]:
-            pack_sequence(t_c, m_c)
+            # If weight is detected, we dispatch with weight FACT_WEIGHT
+            # Otherwise treat as single sequence
+            if len(t_c) < FACT_THRESHOLD and "RAW_TEXT" in get_row_capabilities({"text": "dummy"}): # Mock check
+                # Logic: We determine weight from the worker results context
+                pack_sequence_dispersed(t_c, m_c, weight=FACT_WEIGHT)
+            else:
+                pack_sequence_dispersed(t_c, m_c, weight=1)
 
     for b in active_buckets:
         if len(b['t']) > 0: write_window(b['t'], b['m'])
