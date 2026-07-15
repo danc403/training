@@ -35,6 +35,9 @@ else:
 EVAL_QUESTIONS = [
     "<|user|>The night sky was streaked with a brilliant\n\n<|assistant|>",
     "<|user|>Laugh and the world laughs with you\n\n<|assistant|>",
+    "<|user|>Recite the poem Solitude by Ella Wheeler Wilcox.\n\n<|assistant|>",
+    "<|user|>What month is April?\n\n<|assistant|>",
+    "<|user|>October is month \n\n<|assistant|>",
     "<|user|>Tell me about the Pokemon Pikachu.\n\n<|assistant|>",
     "<|user|>List the base stats for the Pokemon Abomasnow.\n\n<|assistant|>",
     "<|user|>What is the capital of France?\n\n<|assistant|>",
