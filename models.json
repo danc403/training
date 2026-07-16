@@ -1,0 +1,46 @@
+{
+  "model_estimates": {
+    "sprite": {
+      "layers": 6,
+      "emb_dim": 384,
+      "vocab_size": 24000,
+      "tie_embeddings": true,
+      "est_params_tied": "13.2M",
+      "est_params_untied": "22.4M"
+    },
+    "nymph": {
+      "layers": 12,
+      "emb_dim": 512,
+      "vocab_size": 24000,
+      "tie_embeddings": true,
+      "est_params_tied": "36.2M",
+      "est_params_untied": "48.5M"
+    },
+    "dragonfly": {
+      "layers": 16,
+      "emb_dim": 512,
+      "vocab_size": 24000,
+      "tie_embeddings": true,
+      "est_params_tied": "47.2M",
+      "est_params_untied": "59.5M"
+    },
+    "wyrm": {
+      "layers": 16,
+      "emb_dim": 768,
+      "vocab_size": 24000,
+      "tie_embeddings": true,
+      "est_params_tied": "103.4M",
+      "est_params_untied": "121.8M"
+    }
+  },
+  "methodology": {
+    "tied_formula": "(L * (4 * D^2 + 8/3 * D^2)) + (V * D)",
+    "untied_formula": "(L * (4 * D^2 + 8/3 * D^2)) + (2 * V * D)",
+    "variables": {
+      "L": "layers",
+      "D": "emb_dim",
+      "V": "vocab_size"
+    },
+    "assumptions": "Calculations assume standard transformer block components including QKV/Output projections and a feed-forward expansion ratio of 4/3 of the hidden dimension (SwiGLU architecture standard). Layer norm parameters are excluded as they are negligible."
+  }
+}

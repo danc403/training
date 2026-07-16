@@ -71,20 +71,26 @@ case $MODEL_NAME in
         LEARNING_RATE_TUNE=0.0003
         ;;
     "nymph")
-        if [ "$VRAM_GB" -le 12 ]; then GLOBAL_BATCH_SIZE=65536; else GLOBAL_BATCH_SIZE=131072; fi
-        if [ "$VRAM_GB" -le 12 ]; then MICRO_BATCH_SIZE=4; else MICRO_BATCH_SIZE=8; fi
+        #if [ "$VRAM_GB" -le 12 ]; then GLOBAL_BATCH_SIZE=65536; else GLOBAL_BATCH_SIZE=131072; fi
+        #if [ "$VRAM_GB" -le 12 ]; then MICRO_BATCH_SIZE=4; else MICRO_BATCH_SIZE=8; fi
+        GLOBAL_BATCH_SIZE=65536;
+        MICRO_BATCH_SIZE=12;
         LEARNING_RATE=0.0012
         LEARNING_RATE_TUNE=0.0003
         ;;
     "dragonfly")
-        if [ "$VRAM_GB" -le 12 ]; then GLOBAL_BATCH_SIZE=65536; else GLOBAL_BATCH_SIZE=131072; fi
-        if [ "$VRAM_GB" -le 12 ]; then MICRO_BATCH_SIZE=4; else MICRO_BATCH_SIZE=8; fi
+        #if [ "$VRAM_GB" -le 12 ]; then GLOBAL_BATCH_SIZE=65536; else GLOBAL_BATCH_SIZE=131072; fi
+        #if [ "$VRAM_GB" -le 12 ]; then MICRO_BATCH_SIZE=4; else MICRO_BATCH_SIZE=8; fi
+        GLOBAL_BATCH_SIZE=65536;
+        MICRO_BATCH_SIZE=10;
         LEARNING_RATE=0.0010
         LEARNING_RATE_TUNE=0.0003
         ;;
     "wyrm")
-        if [ "$VRAM_GB" -le 12 ]; then GLOBAL_BATCH_SIZE=65536; else GLOBAL_BATCH_SIZE=131072; fi
-        if [ "$VRAM_GB" -le 12 ]; then MICRO_BATCH_SIZE=4; else MICRO_BATCH_SIZE=8; fi
+        #if [ "$VRAM_GB" -le 12 ]; then GLOBAL_BATCH_SIZE=65536; else GLOBAL_BATCH_SIZE=131072; fi
+        #if [ "$VRAM_GB" -le 12 ]; then MICRO_BATCH_SIZE=4; else MICRO_BATCH_SIZE=8; fi
+        GLOBAL_BATCH_SIZE=65536;
+        MICRO_BATCH_SIZE=10;
         LEARNING_RATE=0.0008
         LEARNING_RATE_TUNE=0.0003
         ;;
